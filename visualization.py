@@ -10,10 +10,9 @@ from moviepy.editor import *
 import moviepy.video.io.ImageSequenceClip
 import math
 
-# Visualization Functions
+
 def plotting_global(folder_path, number_of_clients, malicious_attack, malicious_mode, global_results):
     matrix_master = []
-    # print("global_results", global_results)
     for i in range(len(global_results)):
         matrix_master.append(global_results[i][-1])
 
@@ -153,15 +152,8 @@ def plot_node_w_order(folder_path, history):
     plt.ylabel('zoom facter')
     plt.xlabel('goal concentration')
 
-    # for i in range(len(nodes)-1):
-    #     A = nodes[i]
-    #     B = nodes[i+1]
-    #     drawArrow(A, B)
-
     improved_nodes = []
     for i in range(len(nodes)):
-        # ax.annotate(i+1, (x[i], y[i]))
-
         if history[i][2] <= 0:
             improved_nodes.append(history[i][0])
 
@@ -171,7 +163,6 @@ def plot_node_w_order(folder_path, history):
     x = [point[0] for point in improved_nodes]
     y = [point[1] for point in improved_nodes]
 
-    # print("improved_nodes", improved_nodes)
     ax.scatter(x, y, color='red')
     title_string = "RL agent search path"
     plt.title(title_string, fontsize=15)
@@ -191,18 +182,16 @@ def plot_node_w_order_1d(folder_path, history):
     x = [i for i in range(1, n + 1)]
     if len(nodes[0])==1:
         y = [point[0] for point in nodes]
-        plot_node_rl_search(nodes, history, v, folder_path, x, y, plot_name="am")
+        plot_uam_search(nodes, history, v, folder_path, x, y, plot_name="am")
     elif len(nodes[0])==2:
         y1 = [point[0] for point in nodes]
         y2 = [point[1] for point in nodes]
-        # print("x", x)
-        # print("y1", y1)
-        plot_node_rl_search(nodes, history, v, folder_path, x, y1, plot_name="am")
-        plot_node_rl_search(nodes, history, v, folder_path, x, y2, plot_name="gc")
+        plot_uam_search(nodes, history, v, folder_path, x, y1, plot_name="am")
+        plot_uam_search(nodes, history, v, folder_path, x, y2, plot_name="gc")
 
     return None
 
-def plot_node_rl_search(nodes, history, v, folder_path, x, y, plot_name):
+def plot_uam_search(nodes, history, v, folder_path, x, y, plot_name):
     fig, ax = plt.subplots(figsize=(10, 8))
     ax.plot(x, y, color='c', marker='.', linestyle='dashed')
 
@@ -226,9 +215,6 @@ def plot_node_rl_search(nodes, history, v, folder_path, x, y, plot_name):
     x = [point[1] for point in improved_nodes]
     y = [point[0][j] for point in improved_nodes]
 
-    # print('x', x)
-    # print('y', y)
-
     ax.scatter(x, y, color='red')
     title_string = "RL agent search path"
     plt.title(title_string, fontsize=15)
@@ -245,70 +231,3 @@ def images_to_video(image_folder_path: str, output_path: str, fps, extension: st
     movie_clip.write_videofile(output_path + '/' + video_name + output_format, codec="libx264")
     return None
 
-
-# Individual node weights and bias, need to fix
-# def plot_node_weights(model_dict, layer, selected_weight, iteration):
-#     # create an array of the weight values
-#     file_location = "plots/"
-#     sample_weights = []
-#     sample_bias = []
-#     for i in range(self.params['number_of_clients']):
-#         current_model = "model" + str(i)
-#         w_local = getattr(model_dict[current_model], layer).weight[
-#             selected_weight[0], selected_weight[1]].detach().numpy()
-#         b_local = getattr(model_dict[current_model], layer).bias[selected_weight[0]].detach().numpy()
-#
-#         sample_weights.append(w_local.tolist())
-#         sample_bias.append(b_local.tolist())
-#
-#     num_bins = int(self.params['number_of_clients'] / 2)
-#
-#     # process the data with GaussianMixture model
-#     sample_weights = np.asarray(sample_weights)
-#     sample_weights = sample_weights.reshape(len(sample_weights), 1)
-#     sample_bias = np.asarray(sample_bias)
-#     sample_bias = sample_bias.reshape(len(sample_bias), 1)
-#
-#     # Create a histgram
-#     # fig, ax = plt.subplots()
-#     fig, (ax1, ax2) = plt.subplots(2, 1, sharey=False, figsize=(10, 15))
-#
-#     n, bins, patches = ax1.hist(sample_weights, num_bins,
-#                                 density=1,
-#                                 color='darkolivegreen',
-#                                 alpha=0.7)
-#
-#     mu1 = np.mean(sample_weights)
-#     fig.set_facecolor("lightgray")
-#     ax1.axvline(mu1, color='blue', linestyle='dashed', linewidth=1)
-#     # min_ylim, max_ylim = plt.ylim()
-#     plt.suptitle(
-#         'IID Layer of: ' + layer + ', Random Weight: ' + str(selected_weight) + ', Iter ' + str(iteration))
-#     ax1.set_title('Weights Mean: {:.6f}'.format(mu1))
-#
-#     n, bins, patches = ax2.hist(sample_bias, num_bins,
-#                                 density=1,
-#                                 color='brown',
-#                                 alpha=0.7)
-#
-#     mu2 = np.mean(sample_bias)
-#     ax2.axvline(mu2, color='blue', linestyle='dashed', linewidth=1)
-#     ax2.set_title('Bias Mean: {:.6f}'.format(mu2))
-#     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
-#
-#     # create a time stamp
-#     today = date.today().strftime('%Y%m%d')
-#     now = datetime.now()
-#     current_time = now.strftime("%H-%M-%S")
-#
-#     # plt.show()
-#     plt_name = layer + "_" + str(selected_weight[0]) + "_" + str(selected_weight[1]) + "_I_" + \
-#                str(iteration) + "_" + str(today) + "_" + str(current_time) + ".png"
-#
-#     node_folder = file_location + layer + "_" + str(selected_weight[0]) + "_" + str(selected_weight[1])
-#
-#     if not os.path.exists(node_folder):
-#         os.makedirs(node_folder)
-#
-#     plt.savefig(node_folder + '/' + plt_name)
-#     plt.close()

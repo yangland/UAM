@@ -1,7 +1,5 @@
-from pathlib import Path
 import os
 import numpy as np
-import pandas as pd
 import math
 import random
 import logging
@@ -9,12 +7,9 @@ import os
 import warnings
 import copy
 
-import torch.nn.functional as F
 import torch
 from torch import nn
-from torch import optim
 from torchvision import datasets, transforms
-
 from torch.utils.data import TensorDataset
 from torch.utils.data import DataLoader
 
@@ -22,7 +17,6 @@ from models.mnist_3l import Mnist_3L
 from models.mnist_1l import Mnist_1L
 from models.cifar10_6l import Cifar10_6L
 from models.resnet18 import ResNet18
-# from models.cifar10_resnet18 import ResNet18
 from models.cifar10_9l import Cifar10_9L
 from models.fashion_cnn import FashionCNN
 from models.emnist_cnn import EmnistCNN
@@ -34,24 +28,21 @@ from models.kmnist_12l import Kmnist_12L
 from models.cifar100_mobilenetv2 import mobilenetv2
 from models.cifar100_mobilenet import mobilenet
 from models.cifar100_resnet import resnet18
+
 from csv_logging import Csv_logging
 from distance_matrix import Distance
 from collections import Counter
+from neldermead import *
+from collections import OrderedDict
 
 from aggr.geometric_median import geometric_median
 from aggr.krum import krum
 from aggr.foolsgold import foolsgold, foolsgold_new, pendulum, foolsgold_contra
 from aggr.coordinate_wise_median import coordinate_wise_median, trimmed_mean
 from aggr.mani_byzan import our_attack_dist, our_attack_score
-# from rl.naive_mcts import *
-# from rl.naive_mcts_simp import *
-from rl.neldermead import *
-from collections import OrderedDict
+
 
 logger = logging.getLogger("logger")
-
-
-# device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 
 class Helper:
@@ -64,7 +55,6 @@ class Helper:
         self.mali_valid_pca_csv_logger = None
         self.mali_valid_al_csv_logger = None
         self.god_valid_pca_csv_logger = None
-        # self.rl_based_attack = None
         self.attack_method = None
         self.contra_sorted_dict = None
         self.reputation_dict = None
@@ -111,14 +101,11 @@ class Helper:
         self.contra_f = self.params['contra_f']
         self.if_series = self.params['if_series']
         self.sigmoid_c1 = self.params['sigmoid_c1']
-        # self.sigmoid_c2 = self.params['sigmoid_c2']
-        # self.sigmoid_a1 = self.params['sigmoid_a1']
         self.effective_action_domain = self.params['effective_action_domain']
         self.empirical_points = self.params['empirical_points'].copy()
         self.rounds_before_restart = self.params['rounds_before_restart']
         self.rl_mode = self.params['rl_mode']
         self.pre_aggregation_method = self.params['pre_aggregation_method']
-        # self.domain_corners = []
 
         if self.params.get('select_precentage') is None or not self.params['select_precentage']:
             self.clients_selection = None
@@ -154,26 +141,16 @@ class Helper:
 
     # Create the main model and initialization
     def fl_initialization(self):
-        # logger.info("helper.fl_initialization debugging 1: create main model")
         if self.cuda_device.type != 'cpu':
             logger.info(
                 f"device: {self.cuda_device} - {self.cuda_device.type} - {torch.cuda.get_device_name(torch.cuda.current_device())}")
-            # memories = [x / 1024 ** 2 for x in torch.cuda.mem_get_info()]
-            # logger.info(f"free: {memories[0]} MB, total: {memories[1]} MB")
         else:
             logger.info(f"device: {self.cuda_device.type}")
         nn_model = eval(self.params['nn_model'])
         self.main_model = nn_model()
         self.main_model.to(self.cuda_device)
-        # nn.utils.clip_grad_norm_(self.main_model.parameters(), max_norm=100)
-        # gpu_ids = self.params['gpu_ids']
-        # self.main_model = nn.DataParallel(self.main_model, device_ids=gpu_ids)
-        # print(f"nn_model = eval({self.params['nn_model']})")
-        # print(f"self.main_model = nn.DataParallel(self.main_model, device_ids={gpu_ids})")
 
         self.main_criterion = nn.CrossEntropyLoss()
-
-        # logger.info("helper.fl_initialization debugging 2: create_model_optimizer_criterion_dict")
         self.model_dict, self.optimizer_dict, self.criterion_dict = self.create_model_optimizer_criterion_dict(
             list(range(self.params['number_of_clients'])))
         self.sample_nodes = self.random_sampling_nodes(self.main_model, self.params['each_layer_list'])
@@ -181,10 +158,7 @@ class Helper:
         self.name_of_models = list(self.model_dict.keys())
         self.name_of_optimizers = list(self.optimizer_dict.keys())
         self.name_of_criterions = list(self.criterion_dict.keys())
-
-        # logger.info("helper.fl_initialization debugging 3: send_main_model_to_nodes_and_update_model_dict")
         self.model_dict = self.send_main_model_to_nodes_and_update_model_dict(self.main_model, self.model_dict)
-        # logger.info("helper.fl_initialization debugging 3.5: get_malicious_name")
         self.attack_method = self.params['attack_method']
         self.malicious_names, self.malicious_dict, self.honest_names = self.get_malicious_name()
 
@@ -192,62 +166,27 @@ class Helper:
             self.params['malicious_attack'] = False
         else:
             self.params['malicious_attack'] = True
-        # For the malicious clients create a seperated model_dict for undisclosed, analysing purposed training
-        # self.model_dict_m, self.optimizer_dict_m, self.criterion_dict_m = self.create_model_optimizer_criterion_dict(
-        #     self.malicious_names)
 
-        # logger.info("helper.fl_initialization debugging 4: sampling honest, malicious clients")
-        # sampling 4 honest, 4 malicious clients
         self.malicious_sample = random.sample(self.malicious_names, min(4, self.params['number_of_malicious']))
         self.honest_sample = random.sample([i for i in list(range(self.number_of_clients))
                                             if i not in self.malicious_names], 4)
 
-        # logger.info("helper.fl_initialization debugging 5: initialize reputation score dictionary")
-        # reputation score starts with 1.0
         self.reputation_dict = {"model" + str(i): 1 for i in range(self.number_of_clients)}
         self.contra_sorted_dict = dict()
 
-        # logger.info("helper.fl_initialization debugging 6: RL-based attack initialization")
-        # self.rl_based_attack = self.params['rl_based_attack']
-
-        # print("self.attack_method", self.attack_method)
-
         # create the object of Naive_Mcts class
         if self.attack_method == 'RL':
-            # {0: ['label_flipping', [10, 3, 31, 8, 17, 37], [[1, 5],[5,1]]]}
-            # print("self.malicious_dict", self.malicious_dict)
-            # malicious_mode = self.malicious_dict[0][0]
-            # malicious_group_list = self.malicious_dict[0][1]
-            # print("self.malicious_dict", self.malicious_dict)
-            # if self.malicious_dict == {}:
-            #     self.g_main = [[-1, -1], [-1, -1]]
-            # else:
-            #     self.g_main = [[self.malicious_dict[0][2], self.malicious_dict[0][3]],
-            #                [self.malicious_dict[0][3], self.malicious_dict[0][2]]]
-            #TODO fixing the RL for untargeted
             self.g_main = [[-1, -1], [-1, -1]]
-
-            """
-            self.mali_mcts = Naive_Mcts_Simp(name='malicious_1', malicious_mode=malicious_mode,
-                                             num_classes=self.num_classes,
-                                             malicious_group_list=malicious_group_list,
-                                             goal=goal, pi_0_eps=self.params['pi_0_eps'],
-                                             init_search_len=self.params['init_search_len'])
-            """
 
             self.neldermead = NelderMead(name='NelderMead1', x_start=self.rl_action, step=self.step, progress=True,
                                          rl_manual=self.params['rl_manual'],
                                          manual_coordinates=self.params['manual_coordinates'],
                                          empirical_points=self.empirical_points)
 
-            # print("self.neldermead.empirical_points", self.neldermead.empirical_points)
         return None
 
     def create_honest_malicious_data(self):
         sample_dict_train = self.load_data()
-
-        # print("sample_dict_train ['sample0']", sample_dict_train['sample0'])
-        # print("sample_dict_train.keys()", sample_dict_train.keys())
         self.x_train_dict, self.y_train_dict = self.create_subsamples(sample_dict=sample_dict_train,
                                                                       x_data=self.x_train,
                                                                       y_data=self.y_train, x_name="x_train",
@@ -259,10 +198,7 @@ class Helper:
         # spot check self.y_train_dict
         logger.info("spot check on y_train_dict:")
         keys = np.random.choice(list(self.y_train_dict), size=2, replace=False)
-        # print("keys", keys)
         for key in keys:
-            # print("self.y_train_dict[key]", self.y_train_dict[key])
-            # print("self.y_train_dict[key].size()", self.y_train_dict[key].size())
             c = Counter(self.y_train_dict[key].tolist())
             logger.info(f"{key} total {str(len(self.y_train_dict[key]))}: {str(sorted(c.items()))}")
 
@@ -275,47 +211,27 @@ class Helper:
             logger.info(f"malicious names: {self.malicious_names}")
             logger.info(f"malicious proportion: {self.malicious_dict}")
 
-            # select malicious names from self.x_train_dict, self.y_train_dict, create a pooled dataset for the malicious group
-            # self.pool_dl work like self.god_valid_dl
             x_pool = []
             y_pool = []
-            # print("self.malicious_names", self.malicious_names)
-            for i in self.malicious_names:
-                # print("i", i)
-                # print("self.name_of_x_train_sets[i]", self.name_of_x_train_sets[i])
-                # print("self.x_train_dict[self.name_of_x_train_sets[i]].size()",
-                #       self.x_train_dict[self.name_of_x_train_sets[i]].size())  # torch.Size([1069, 784])
-                # print("self.y_train_dict[self.name_of_y_train_sets[i]].size()",
-                #       self.y_train_dict[self.name_of_y_train_sets[i]].size())
 
+            for i in self.malicious_names:
                 x_pool.append(self.x_train_dict[self.name_of_x_train_sets[i]].to(self.cuda_device))
                 y_pool.append(self.y_train_dict[self.name_of_y_train_sets[i]].to(self.cuda_device))
 
             x_pool = torch.cat(x_pool, dim=0)
             y_pool = torch.cat(y_pool, dim=0)
-            # print("x_pool", x_pool.size())
-            # print("y_pool", y_pool.size())
 
             logger.info(
                 f"Classes distribution on the pooled data (one malicious group, {len(self.malicious_names)} members):")
             c = Counter(y_pool.tolist())
-            # print("Pooled " + str(len(self.malicious_names)) + ": " + "total " + str(len(y_pool)) + ": " + str(sorted(c.items())))
             logger.info(f"total {len(y_pool)}: {sorted(c.items())}")
 
             pool_ds = TensorDataset(x_pool, y_pool)
             self.pool_dl = DataLoader(pool_ds, batch_size=self.params['batch_size'], shuffle=True)
 
-            # change for two-models, based on input malicious_proportion or RL based
-            # print("self.attack_method", self.attack_method)
             if self.attack_method == 'explicit boosting':
                 # in non-RL based attack the malicious dataset is fixed, created before the train_iteration starts
                 for i, param in self.malicious_dict.items():
-                    # print("i, param", i, param)
-                    # malicious_mode = param[0]
-                    # malicious_group_list = param[1]
-                    # from_label = param[2]
-                    # to_label = param[3]
-
                     malicious_mode = "untargeted1"
                     malicious_group_list = param[1]
                     from_label = -1
@@ -373,14 +289,7 @@ class Helper:
                 logger.info(f"model output nan, stop at epoch: {i}")
                 break
 
-            # checking on the main_model
-            # logger.info(f"Debugging self.main_model weights "
-            #             f"{get_layer_weight(self.main_model, self.params['weights_layer'])}")
-
-            # 1. Send the main model to the local models
             self.model_dict = self.send_main_model_to_nodes_and_update_model_dict(self.main_model, self.model_dict)
-            # model_dict_m also got the model from server
-            # self.model_dict_m = self.send_main_model_to_nodes_and_update_model_dict(self.main_model, self.model_dict_m)
 
             if self.params['malicious_attack']:
                 if self.attack_method == 'RL':
@@ -388,13 +297,9 @@ class Helper:
                     # self.mali_mcts.record(mali_accuracy_record, mali_asr_record)
                     self.neldermead.record(mali_accuracy_record, self.rl_action, progress=True)
 
-                    # 2. Naive MCTS with arm expansion
-                    # action = self.mali_mcts.mcts()
-
                     # 2. NelderMead
                     if not self.neldermead.rl_manual:
                         # first check the points in the empirical_points
-                        # print("self.neldermead.empirical_points2", self.neldermead.empirical_points)
                         if len(self.neldermead.empirical_points) != 0:
                             empirical_action = random.choice(self.neldermead.empirical_points)
                             self.neldermead.empirical_points.remove(empirical_action)
@@ -402,17 +307,13 @@ class Helper:
                         else:
                             if self.neldermead.init_spot_search:
                                 # find the best among the empirical_points
-                                # print("self.neldermead.history", self.neldermead.history)
                                 rewards_empirical = [row[2] for row in self.neldermead.history[1:]]
-                                # print("rewards_empirical", rewards_empirical)
                                 best_empirical = \
                                     self.neldermead.history[rewards_empirical.index(min(rewards_empirical)) + 1][0]
-                                # print("best_empirical", best_empirical)
                                 self.neldermead.restart(new_start=best_empirical)
                                 self.rl_action = self.neldermead.nelder_mead()
                                 self.neldermead.init_spot_search = False
                             else:
-                                # If reached rounds_before_restart, randomly restart from domain without edge
                                 if self.neldermead.reach_restart_threshold(self.rounds_before_restart):
                                     new_start = None
                                     if self.rl_mode == "untargeted_label_flip":
@@ -438,10 +339,6 @@ class Helper:
                     warnings.warn("Please use rl_manual to set up manual attack, set rl_based_sttack = True")
             else:
                 pass
-            
-            # 1.5 select clients for this round's FL if self.clients_selection = True
-            # if self.clients_selection:
-            #     selected_model_dict = (self.model_dict, self.number_of_clients, self.clients_selection)
 
             # 2. clients local training
             self.process_with_local_training(i)
@@ -456,10 +353,7 @@ class Helper:
             # 3. aggregation and get the new main model
             self.main_model = self.update_main_model_use_aggregated_weights(self.main_model, self.subset_dict, i,
                                                                             self.server_lr)
-            # nn.utils.clip_grad_norm_(model.parameters(), max_norm=100)
-            # Normalize the weights
-            # with torch.no_grad():
-            #     self.main_model.weight.div_(torch.norm(self.main_model.weight, dim=1, keepdim=True))
+
 
             god_loss_record, god_accuracy_record, god_asr_record, model_output_na = self.recording_validation(i, "god")
             god_loss_records.append(god_loss_record)
@@ -484,25 +378,14 @@ class Helper:
         self.mali_valid_al_csv_logger.save_csv(self.folder_path, self.current_time)
         self.mali_valid_pca_csv_logger.save_csv(self.folder_path, self.current_time)
         self.weights_csv_logger.save_csv(self.folder_path, self.current_time)
-        # print("god_loss_record", god_loss_record)
-        # print("god_accuracy_records", god_accuracy_records)
-        # print("god_asr_records", god_asr_records)
         return self.global_results, god_accuracy_records, god_loss_records, god_asr_records
 
     def process_with_local_training(self, iteration):
-        """
-        if self.rl_action is not None:
-            logger.info(f"Naive MCTS's action: {action.name}")
-        else:
-            logger.info(f"Naive MCTS's action: {action}")
-        g_iter, g_locals = self.malicious_goals_on_action(action)
-        """
-
         if len(self.malicious_names) != 0:
             goal_conc, attack_magnitude = action_to_params(self.rl_action,
                                                            self.sigmoid_c1,
                                                            self.params['action_conv_func'], self.params['rl_mode'])
-            # print("goal_conc, attack_magnitude", goal_conc, attack_magnitude)
+
             if self.attack_method == 'RL':
                 if self.rl_mode == "untargeted_label_flip":
                     g_locals = self.malicious_goals_on_goal_conc(goal_conc)
@@ -510,7 +393,6 @@ class Helper:
                     for key, value in g_locals.items():
                         logger.info(f"{key}: {dict(value)}")
 
-                    # use g_local to create local malicious datasets
                     x_train_m_dict_rl, y_train_m_dict_rl = self.create_rl_malicious_datasets(self.x_train_dict,
                                                                                              self.y_train_dict,
                                                                                              self.malicious_names,
@@ -521,81 +403,10 @@ class Helper:
                 elif self.rl_mode == "reverse_grad":
                     pass
             else:
-                # manual based label flipping attack (untarget1)
-                # the x_train_m_dict and y_train_m_dict do not need to be updated every iteration
                 pass
         else:
             attack_magnitude = 1.0
             goal_conc = 0
-            # if self.params['rl_uniform']:
-            #     goal_conc = None
-            # print("goal_conc: ", goal_conc)
-        # 3. Group training based on the honest datasets and the malicious datasets (current iteration)
-        # same as the rest of the code in iteration
-        # self.params['respect_server_model'] = action.details['respect_server']
-        # self.params['malicious_group_agg'] = action.details['mali_group_agg']
-        # self.params['reverse_grad'] = action.details['reverse_grad']
-
-        # elif self.params['malicious_attack'] and (self.params['rl_based_attack'] is False):
-        # whether malicious clients respect model from server in the iterations starts from 1 (not 0)
-
-        # honest_model_names = ["model" + str(x) for x in list(range(self.number_of_clients)) if
-        #                       x not in self.malicious_names]
-        # honest_model_dict = dict((k, self.model_dict[k]) for k in honest_model_names)
-        # """
-        # if self.params['respect_server_model']:
-        #     # All clients get the main model
-        #     self.model_dict = self.send_main_model_to_nodes_and_update_model_dict(self.main_model, self.model_dict)
-        # else:
-        #     # Honest clients still gets the server's model
-        #     honest_model_dict = self.send_main_model_to_nodes_and_update_model_dict(self.main_model,
-        #                                                                             honest_model_dict)
-        #
-        # if self.params['malicious_attack'] and self.params['malicious_group_agg']:
-        #     # Use FedAvg to aggregate malicious model and send to group's malicious client
-        #     malicious_model_dict = dict()
-        #     for param in self.malicious_dict.values():
-        #         group_names = ["model" + str(s) for s in param[1]]
-        #         group_dict = dict((k, self.model_dict[k]) for k in group_names)
-        #         # Avg
-        #         weight_accumulator = self.get_aggregated_weights(group_dict, "fedavg")
-        #
-        #         # Select one model as a main model for the malicious group
-        #         malicious_main = group_dict[group_names[0]]
-        #         other_m_members = {i: group_dict[i] for i in group_dict if i != group_names[0]}
-        #
-        #         # if self.params['reverse_grad'] is False:
-        #
-        #         for name, param in malicious_main.state_dict().items():
-        #             get_layer_weight(malicious_main, name).data = weight_accumulator[name].data.clone()
-        #
-        #         # Distribute to all other malicious clients in the group
-        #         malicious_model_local = self.send_main_model_to_nodes_and_update_model_dict(malicious_main,
-        #                                                                                     other_m_members)
-        #         # Add back the malicious main
-        #         malicious_model_dict[group_names[0]] = malicious_main
-        #
-        #         # else:
-        #         #     # reverse the malicious_main's gradients
-        #         #     for name, param in malicious_main.state_dict().items():
-        #         #         get_layer_weight(malicious_main, name).data = torch.neg(weight_accumulator[name].data).clone()
-        #         #     # print("if self.params['reverse_grad'] is True")
-        #         #     malicious_model_local = self.send_main_model_to_nodes_and_update_model_dict(malicious_main,
-        #         #                                                                                 other_m_members)
-        #         #     # need to reverse the group_names[0]
-        #         #     malicious_model_dict[group_names[0]] = malicious_main
-        #         malicious_model_dict = {**malicious_model_dict, **malicious_model_local}
-        # else:
-        # """
-        # malicious_model_names = ["model" + str(x) for x in list(range(self.number_of_clients)) if
-        #                          x in self.malicious_names]
-        # malicious_model_dict = dict((k, self.model_dict[k]) for k in malicious_model_names)
-        #
-        # self.model_dict = {**malicious_model_dict, **honest_model_dict}
-
-        # print("self.model_dict", self.model_dict) # missing
-        # print("malicious_model_dict", malicious_model_dict.keys())
-        # print("honest_model_dict", honest_model_dict.keys())
 
         select_model_dict, idx_clients = client_random_selection(self.model_dict, self.number_of_clients, self.clients_selection)
 
@@ -634,8 +445,6 @@ class Helper:
                 # 1. average the malicious clients as mean
                 # 2. Z_max = 0.08, based on n = 20, m = 5
                 # 3. minus Z_max * std from mean
-                # {key: model_dict[key] for key in buckets_group[b]}
-                # Z_max = 0.5
                 Z_max = 0.08
 
                 malicious_models = {key: self.model_dict["model" + str(key)] for key in self.malicious_names}
@@ -708,9 +517,6 @@ class Helper:
                         for model_name in self.subset_dict.keys():
                             if int(model_name[5:]) in self.malicious_names:
                                 for layer_name, param in self.main_model.state_dict().items():
-                                    # logger.info("reverse_grad weights calculation")
-                                    # logger.info(f"Malicious weight before {get_layer_weight(self.model_dict[model_name], layer_name)}")
-                                    # logger.info(f"Malicious grads {get_layer_weight(grads_regular[model_name], layer_name)}")
                                     if self.params.get('Median_att') is None or not self.params['Median_att']:
                                         get_layer_weight(self.model_dict[model_name], layer_name).data = \
                                             get_layer_weight(self.model_dict_before[model_name], layer_name).clone() \
@@ -726,14 +532,8 @@ class Helper:
                                         client_names = ["model" + str(s) for s in client_list]
                                         model_list = {key: self.model_dict[key] for key in client_names}
 
-                                        # model_median = coordinate_wise_median(model_list)
-
                                         model_median = self.get_aggregated_weights(model_list, 'fedavg')
-                                        # print("model_median is FedAvg")
 
-                                        # print("keys of model", model_median.keys())
-                                        # print("layer_name", layer_name)
-                                        # attack_magnitude = 1000
                                         get_layer_weight(self.model_dict[model_name], layer_name).data = \
                                             - model_median[layer_name].clone() * attack_magnitude
 
@@ -780,79 +580,12 @@ class Helper:
         # miss_mapped_classes = [i[0] for i in g_main]
         # g_iter = None
         g_locals = {}
-        """
-        alpha1 = action.details['alpha1']
-        beta1 = action.details['beta1']
-        beta2 = action.details['beta2']
-        if_reverse = action.details['reverse_grad']
-        # print("alpha1", alpha1)
-        # print("beta1", beta1)
-        # print("beta2", beta2)
-
-        # get g_iter
-        if if_reverse is False:
-            # 1. randomly select alpha1 # of pairs in the g_main
-            if alpha1 == len(g_main):
-                g_iter = dict(g_main)
-            else:
-                idx = np.random.randint(len(g_main), size=alpha1)
-                # print("g_main", g_main)
-                # print("alpha_1", alpha1)
-                # print("idx", idx)
-                g_iter = dict(np.asarray(g_main)[idx, :])
-
-            if beta2 != 0:
-                g_iter = self.goal_randomizer(g_iter, beta2)
-        else:
-            # keep g_main as correct mapping and same with g_iter
-            g_main = []
-            for i in list(range(self.num_classes)):
-                g_main.append([i, i])
-
-            g_iter = dict(g_main)
-
-        # get g_locals
-        if beta1 == 0:
-            for i in self.malicious_names:
-                g_locals[i] = g_iter
-        else:
-            for i in self.malicious_names:
-                # print("beta1 not 0")
-                g_locals[i] = self.goal_randomizer(g_iter, beta1)
-                # print("g_locals[i]", g_locals[i])
-        # print("g_locals on action", g_locals)
-        """
 
         for i in self.malicious_names:
             g_locals[i] = self.goal_randomizer(g_main, goal_conc)
         return g_locals
 
     def goal_randomizer(self, goal, goal_conc):
-        """
-        all_classes = list(range(0, self.num_classes))
-        selected_classes = np.random.choice(all_classes, beta, replace=False)
-        selected_classes.sort()
-        new_goal = OrderedDict()
-
-        # for from_label in selected_classes:
-        #     if from_label in goal.keys():
-        #         # if incorrect, correct it
-        #         del goal[from_label]
-        #     else:
-        #         # if correct, randomly assign a mismatch label
-        #         available_classes = [item for item in list(range(0, self.num_classes)) if
-        #                              item not in [from_label]]
-        #         to_label = random.choice(available_classes)
-        #         goal[from_label] = to_label
-
-        # just random
-        for from_label in selected_classes:
-            available_classes = [item for item in list(range(0, self.num_classes))]
-            to_label = random.choice(available_classes)
-            new_goal[from_label] = to_label
-
-        # to-do mix of unchosen old goal and the new goal
-        """
         all_classes = list(range(0, self.num_classes))
         new_goal = OrderedDict()
 
@@ -950,14 +683,6 @@ class Helper:
         return loss_record, accuracy_record, attack_success_rate_dict, model_output_na
 
     def get_malicious_name(self):
-        """
-        # old self.malicious_name as list
-        # Create list for clients who are Malicious
-        np.random.seed(self.params['random_seed'])
-        malicious_names = np.random.choice(range(self.params['number_of_clients']), \
-                                           self.params['number_of_malicious'], replace=False)
-        malicious_names.sort()
-        """
         # new self.malicious_name as a dictionary
         malicious_dict = dict()
         malicious_selected = np.random.choice(range(self.params['number_of_clients']), \
@@ -965,7 +690,6 @@ class Helper:
         malicious_selected.sort()
         honest_selected = [i for i in list(range(self.params['number_of_clients'])) if i not in malicious_selected]
         malicious_preprocessing = list(malicious_selected)
-        # logger.info("helper.get_malicious_name debugging 1: create malicious_selected")
 
         if self.attack_method in ['explicit boosting', 'traditional']:
             malic_prop = self.params['malicious_proportion']
@@ -992,22 +716,11 @@ class Helper:
                 malicious_preprocessing = [x for x in malicious_preprocessing if x not in group_selected]
 
             assert sum_prop - 1 <= 0.001, "malic_prop % have to sum to 1"
-            # print(malicious_selected)
-            # [1  3  4  5  8 10 13 17 18 23 28 31 34 36 37 38]
-            # print(malicious_dict)
-            # {0: ['backdoor', [5, 1, 18, 13, 34, 4, 28, 38, 36], 2, 7], 1: ['label_flipping', [10, 3, 31, 8, 17, 37], 1, 5]}
         elif self.attack_method == 'little':
             malicious_mode = 'None'
             goal = [-1, -1]
             malicious_dict[0] = [malicious_mode, malicious_preprocessing, goal]
-        # elif self.attack_method == 'explicit boosting':
-        #     malicious_mode = 'untargeted'
-        #     to_map = list(range(self.num_classes))
-        #     goal = create_mismatch_mapping(to_map)
-        #     malicious_dict[0] = [malicious_mode, malicious_preprocessing, goal]
         elif self.attack_method == 'RL':
-            # in RL model the main goal can be ['untargeted'], ['random_pair'] or any pairs of labels, such as [1,7]
-            # logger.info("helper.get_malicious_name debugging 2: rl_based_attack is True")
             malicious_mode = 'None'
 
             if self.params['Goal'] == 'untargeted':
@@ -1033,23 +746,16 @@ class Helper:
         y_train_m_dict = {}
 
         for i in malicious_names:
-            # print("i malicious names", i)
             x_train_m_dict["x_train_m_" + str(i)] = x_train_dict["x_train" + str(i)]
             # modify y labels based on the action dictionary
             y_modified = []
             for j in range(len(y_train_dict['y_train' + str(i)])):
-                # print("j", j)
-                # print("g_locals[i].keys()", g_locals[i].keys())
-                # print("y_train_dict['y_train' + str(i)][j].cpu()", y_train_dict['y_train' + str(i)][j].cpu())
                 if y_train_dict['y_train' + str(i)][j].cpu().item() not in g_locals[i].keys():
                     # for classes not in the action, keep the same
                     y_modified.append(y_train_dict['y_train' + str(i)][j].cpu())
                 else:
                     # for classes included in the action, modify based on the g_local dict
                     y_modified.append(torch.tensor(g_locals[i][y_train_dict['y_train' + str(i)][j].cpu().item()]))
-                    # print("rl dataset:")
-                    # print(y_train_dict['y_train' + str(i)][j].cpu().item())
-                    # print(g_locals[i][y_train_dict['y_train' + str(i)][j].cpu().item()])
             y_train_m_dict["y_train_m_" + str(i)] = torch.from_numpy(np.asarray(y_modified)).to(self.cuda_device)
         return x_train_m_dict, y_train_m_dict
 
@@ -1108,8 +814,6 @@ class Helper:
                             # Set pixel #783 to white (the brightest white in picture)
                             current_x[783] = torch.max(current_x)
                         elif self.params['type'] == 'cifar10':
-                            # print("current_x.size()",current_x.size()) # [3, 32, 32]
-                            # print("current_x[0]", current_x[0])
                             for layer in range(len(current_x)):
                                 current_x[layer][31][31] = torch.max(current_x[layer])
                         else:
@@ -1138,9 +842,6 @@ class Helper:
                 classes_dict[str("label") + str(label)].append(int(ind))
             else:
                 classes_dict[str("label") + str(label)] = [int(ind)]
-        # print("build_classes_dict", classes_dict)
-        # print("classes_dict.keys()", classes_dict.keys())
-        # print("classes_dict['label7']", classes_dict['label7'])
         return classes_dict, list(class_ids)
 
     def get_x_y_datasets(self, dataset):
@@ -1148,30 +849,13 @@ class Helper:
         y_data = []
         for ind, data in enumerate(dataset):  # for cifar: 50000
             x, y = data
-            # print("x.size()", x.size()) #[3, 32, 32]
-            # print("y", y) # class
-            # adjust data dimension
             if self.params['type'] == 'mnist':
                 x_data.append(torch.flatten(x[0]))
-            elif self.params['type'] == 'cifar10':
-                x_data.append(x)
-            elif self.params['type'] == 'fashion_mnist':
-                x_data.append(x)
-            elif self.params['type'] == 'emnist':
-                x_data.append(x)
-            elif self.params['type'] == 'kmnist':
-                x_data.append(x)
-            elif self.params['type'] == 'cifar100':
-                x_data.append(x)
-            elif self.params['type'] == 'imagenette':
+            elif self.params['type'] in ['cifar10', 'fashion_mnist', 'emnist', 'kmnist', 'cifar100', 'imagenette']:
                 x_data.append(x)
             y_data.append(y)
         x_data = torch.stack(x_data)
         y_data = torch.as_tensor(y_data)
-
-        # print("x_data.size()", x_data.size()) # ([50000, 3, 32, 32])
-        # print("y_data.size()", y_data.size()) # ([50000])
-        # print("y_data", y_data)
         return (x_data, y_data)
 
     # Data Loading and Processing Functions
@@ -1208,14 +892,12 @@ class Helper:
         else:
             warnings.warn("Data type not recognized in load_data")
 
-        # print("self.test_dataset", self.test_dataset)
         logger.info('reading data done')
 
         self.classes_dict, self.class_ids = self.build_classes_dict()
 
         # order for class ids when the id in y data not start with 0
         self.label_classname_dict = dict(zip(self.class_ids, self.class_names))
-        # print("self.label_classname_dict", self.label_classname_dict)
 
         self.x_train, self.y_train = self.get_x_y_datasets(self.train_dataset)
 
@@ -1234,7 +916,6 @@ class Helper:
         return sample_dict_train
 
     def get_subsamples_indices(self, label_dict, number_of_clients, amount, num_classes, class_ids, NonIID, alpha):
-        # print("label_dict keys", label_dict.keys())
         sample_dict = dict()
         batch_size = int(math.floor(amount / number_of_clients))
 
@@ -1312,7 +993,6 @@ class Helper:
         return sample_dict
 
     def create_subsamples(self, sample_dict, x_data, y_data, x_name, y_name):
-        # print("sample_dict keys", sample_dict.keys())
         x_data_dict = dict()
         y_data_dict = dict()
 
@@ -1320,14 +1000,10 @@ class Helper:
             xname = x_name + str(i)
             yname = y_name + str(i)
             sample_name = "sample" + str(i)
-            # print("sample_name", sample_name)
-            # print("sample_dict[sample_name]", sample_dict[sample_name])
 
             # use the global index to reconnect x and y
             sample_dict[sample_name].sort()
             x_info = [x_data[j] for j in sample_dict[sample_name]]
-            # print("x_info", x_info)
-            # print("i", i)
             if x_info == []:
                 print("i", i)
             x_info = torch.stack(x_info)
@@ -1337,8 +1013,6 @@ class Helper:
             y_info.to(self.cuda_device)
             y_data_dict.update({yname: y_info})
 
-        # print("x_data_dict.keys()", x_data_dict.keys())
-        # print("y_data_dict", y_data_dict)
         return (x_data_dict, y_data_dict)
 
     # Training and Validation Functions
@@ -1349,24 +1023,12 @@ class Helper:
         correct = 0
 
         for data, target in train_loader:
-            # print("In training:")
-            # # print("data", data)
-            # print("data size", data.size()) #[32, 3, 32, 32]
-            # print("target", target)
-            # print("target", target.size())
-
             output = model(data)
-
-            # print("train output", output)
-            # print("train target", target)
 
             loss = criterion(output, target)
 
-            # print("loss", loss)
             optimizer.zero_grad()
             loss.backward()
-            # added model clipping, did not work
-            # nn.utils.clip_grad_norm_(model.parameters(), max_norm=100)
             optimizer.step()
 
             train_loss += loss.item()
@@ -1426,64 +1088,26 @@ class Helper:
                 else:
                     warnings.warn("data type not in helper.validation")
 
-                # print("data.is_cuda()", data.is_cuda)
-                # print("next(net.parameters()).is_cuda", next(model.parameters()).is_cuda)
-                # print("data.shape", data.shape)
-                # print("target", target)
-
-                # not because of 'nan' in the main model
                 is_nan = torch.stack([torch.isnan(p).any() for p in self.main_model.parameters()]).any()
                 if is_nan:
                     logger.info(f"Found 'nan' in the main model")
 
                 output = model(data)
-                # logger.info(f"test_loss1, {test_loss}")
-                # logger.info(f"output, {output}")
-                # logger.info(f"target, {target}")
 
                 model_output_na = False
                 if torch.isnan(output).any():
                     model_output_na = True
-                    # logger.info(f"validation server model output is NA, {torch.isnan(output).any()}")
-                    # logger.info(f"data for server model sample, {data}")
-                    # logger.info(f"data max and min, {torch.max(data), torch.min(data)}")
-
-                # logger.info(f"target has NA, {torch.isnan(target).any()}")
-                # logger.info(f"criterion(output, target), {criterion(output, target)}")
-                # logger.info(f"criterion(output, target).item(), {criterion(output, target).item()}")
                 test_loss += criterion(output, target).item()
                 prediction = output.argmax(dim=1, keepdim=True)
-                # logger.info(f"prediction, {prediction}")
-                # print("output", output) # all lines are the same
-                # print("prediction", prediction) # only one class
-                # print("prediction size", prediction.size()) # 64
-                # print("target", target) # different digits
-                # print("target", target.size()) # 64
-
-                # print("prediction.eq(target.view_as(prediction))", prediction.eq(target.view_as(prediction)))
-                # print("prediction.eq(target.view_as(prediction)).sum()", prediction.eq(target.view_as(prediction)).sum())
                 correct += prediction.eq(target.view_as(prediction)).sum().item()
-                # logger.info(f"correct1, {correct}")
-
-                # per class accuracy
                 prediction = prediction.flatten()
                 target = target.flatten()
 
-                # print("self.class_ids", self.class_ids)
-                # print("self.class_names", self.class_names)
-
                 for label, prediction in zip(target, prediction):
-                    # label_out = self.class_names[self.class_ids.index(label)]
                     output_classname = self.label_classname_dict[int(label)]
                     if label == prediction:
                         correct_pred[output_classname] += 1
                     total_pred[output_classname] += 1
-
-                    # # Attack Success Rate
-                    # if label == self.from_label:
-                    #     Ns += 1
-                    #     if prediction == self.to_label:
-                    #         Nt += 1
 
                     # Attack Success Rate with multi attack targets
                     for target_name, param in attack_success_rate_dict.items():
@@ -1501,9 +1125,6 @@ class Helper:
             else:
                 per_class_accuracy = -1
             per_class_accuracy_dict[classname] = per_class_accuracy
-            # print("classname, per_class_accuracy", classname, per_class_accuracy)
-
-        # print("attack_success_rate_dict", attack_success_rate_dict)
 
         for target_name, param in attack_success_rate_dict.items():
             # Nt / Ns
@@ -1512,22 +1133,7 @@ class Helper:
             else:
                 attack_success_rate = -1
             attack_success_rate_dict[target_name].append(attack_success_rate)
-
-        # logger.info(f"test_loss2, {test_loss}")
-        # logger.info(f"correct2, {correct}")
         return test_loss, correct, attack_success_rate_dict, per_class_accuracy_dict, model_output_na
-
-    """
-    def get_gradients_bet_weights(self, weights_dict_before, model_dict_after, model_dict):
-        gradients = {}
-        for model_name in model_dict.keys():
-            gradients[model_name] = {}
-            for layer_name in self.main_model.state_dict().keys():
-                gradient_layer_i = model_dict_after[model_name][layer_name] - weights_dict_before[model_name][
-                    layer_name]
-                gradients[model_name][layer_name] = gradient_layer_i
-        return gradients
-    """
 
     def get_gradients_bet_models(self, model_dict_before, model_dict_after):
         with torch.no_grad():
@@ -1545,52 +1151,18 @@ class Helper:
         initial_result = self.create_similarity_matrix(self.model_dict, layer, distance_matrix)
         self.global_results.append([iteration, 0, layer, distance_matrix, initial_result])
 
-        # if rl_mode == "untargeted_label_flip":
-        #     # save the model weights before training
-        #     model_dict_before = get_weights_from_model_dict(self.model_dict)
-        #     self.model_dict_before = model_dict_before
-        # elif rl_mode == "reverse_grad":
-        #     model_dict_before_m = get_weights_from_model_dict(self.model_dict_m)
-        # print("idx_clients", idx_clients)
         self.subset_dict = {key: value for key, value in self.model_dict.items() if int(key[5:]) in idx_clients}
-        # print("self.subset_dict", self.subset_dict)
         self.model_dict_before = get_weights_from_model_dict(self.subset_dict)
 
         for epoch in range(1, self.params['numEpoch'] + 1):
             for i in idx_clients:
                 if malicious_attack is True and self.iteration_mali is True: 
-                    """
-                    if i not in malicious_names:
-                        # honest clients uses original dataset
-                        train_ds = TensorDataset(self.x_train_dict[self.name_of_x_train_sets[i]].to(self.cuda_device),
-                                                 self.y_train_dict[self.name_of_y_train_sets[i]].to(self.cuda_device))
-                        train_dl = DataLoader(train_ds, batch_size=self.params['batch_size'], shuffle=True)
-                    else:
-                        if rl_mode == "reverse_grad":
-                            # always train the self.model_dict_m with correct data
-                            train_ds_h = TensorDataset(self.x_train_dict[self.name_of_x_train_sets[i]].to(self.cuda_device),
-                                                       self.y_train_dict[self.name_of_y_train_sets[i]].to(self.cuda_device))
-                            train_dl_h = DataLoader(train_ds_h, batch_size=self.params['batch_size'], shuffle=True)
-
-                            model_m = self.model_dict_m[self.name_of_models[i]]
-                            criterion_m = self.criterion_dict_m[self.name_of_criterions[i]]
-                            optimizer_m = self.optimizer_dict_m[self.name_of_optimizers[i]]
-
-                            # self.train_local_model(model_m, train_dl_h, criterion_m, optimizer_m)
-                        elif rl_mode == "untargeted_label_flip":
-                            # malicious client uses malicious dataset
-                            train_ds = TensorDataset(self.x_train_m_dict["x_train_m_" + str(i)].to(self.cuda_device),
-                                                     self.y_train_m_dict["y_train_m_" + str(i)].to(
-                                                         self.cuda_device))  # malicious dataset
-                            train_dl = DataLoader(train_ds, batch_size=self.params['batch_size'], shuffle=True)
-                    """
                     train_ds = TensorDataset(self.x_train_dict[self.name_of_x_train_sets[i]].to(self.cuda_device),
                                              self.y_train_dict[self.name_of_y_train_sets[i]].to(self.cuda_device))
                     train_dl = DataLoader(train_ds, batch_size=self.params['batch_size'], shuffle=True)
 
                     if i in malicious_names:
                         if rl_mode == "untargeted_label_flip" or self.attack_method == 'explicit boosting':
-                            # print('explicit boosting in start_train_end_node_process')
                             train_ds = TensorDataset(self.x_train_m_dict["x_train_m_" + str(i)].to(self.cuda_device),
                                                      self.y_train_m_dict["y_train_m_" + str(i)].to(
                                                          self.cuda_device))  # malicious dataset
@@ -1602,9 +1174,6 @@ class Helper:
 
                     # the local training process
                     train_loss, train_accuracy = self.train_local_model(model, train_dl, criterion, optimizer)
-                    # if i % 10 == 0:
-                    #     print("Debugging", i, ":", train_loss, train_accuracy)
-                # malicious_attack is False
                 else:
                     train_ds = TensorDataset(self.x_train_dict[self.name_of_x_train_sets[i]].to(self.cuda_device),
                                              self.y_train_dict[self.name_of_y_train_sets[i]].to(self.cuda_device))
@@ -1615,9 +1184,6 @@ class Helper:
                     optimizer = self.optimizer_dict[self.name_of_optimizers[i]]
 
                     train_loss, train_accuracy = self.train_local_model(model, train_dl, criterion, optimizer)
-                    # test_loss, test_accuracy = validation(model, test_dl, criterion)
-                    # print("end node train_loss, train_accuracy", train_loss, train_accuracy)
-
             if plot_indiv is True:
                 for sample in sample_list:
                     self.plot_node_weights(self.model_dict, sample[0], sample[1], iteration)
@@ -1626,31 +1192,13 @@ class Helper:
                 iteration_result = self.create_similarity_matrix(self.model_dict, layer, distance_matrix)
                 self.global_results.append([iteration, epoch, layer, distance_matrix, iteration_result])
 
-        # After all epochs in one FL iteration, the weights are in the model dictionary, we need to get the gradients
-        # subset_dict = {key: value for key, value in self.model_dict() if key in idx_clients}
         model_dict_after = get_weights_from_model_dict(self.subset_dict)
-        # model_dict_after_m = get_weights_from_model_dict(self.model_dict_m)
-
-        # logger.info(f"Debugging check weights, {model_dict_after[self.name_of_models[0]].keys()}")
-        # if len(self.malicious_names) != 0:
-        #     selected_mali_model = "model" + str(self.malicious_names[-1])
-
-            # logger.info(f"Debugging check weights, {model_dict_after[self.name_of_models[0]].keys()}")
-            # logger.info(f"Debugging check malicious client weights {selected_mali_model}, "
-            #             f"{get_layer_weight(model_dict_after[selected_mali_model], self.params['weights_layer'])}")
- 
 
         honest_model_names = ["model" + str(x) for x in list(range(self.number_of_clients)) if
                               x not in self.malicious_names]
         selected_honest_model = honest_model_names[-1]
 
-        # logger.info(f"Debugging check honest client weights {selected_honest_model}, "
-        #             f"{get_layer_weight(model_dict_after[selected_honest_model], self.params['weights_layer'])}")
-
-        # after weights - before weights = gradients
         grads_regular = self.get_gradients_bet_models(self.model_dict_before, model_dict_after)
-        # grads_mali_honest = self.get_gradients_bet_weights(model_dict_before_m, model_dict_after_m,
-        #                                                    self.model_dict_m)
 
         return grads_regular
 
@@ -1695,8 +1243,6 @@ class Helper:
                 bucket = random.sample(model_list, s)
                 model_list = list(set(model_list) - set(bucket))
                 buckets_group.append(bucket)
-
-            # logger.info(f"buckets_group: {buckets_group}")
 
             # averaging in the buckets
             for b in range(len(buckets_group)):
@@ -1775,10 +1321,6 @@ class Helper:
             struct = torch.zeros(size=param.size(), device=self.cuda_device)
             weight_accumulator[name] = struct
 
-        # clients' model integrity check
-        # if self.params['check_integrity']:
-        #     engineered_model = self.check_model_integrity(model_dict)
-
         # FedAvg
         if aggregation_method == 'fedavg':
             # print('agg method is fedavg')
@@ -1794,10 +1336,8 @@ class Helper:
         elif aggregation_method == 'geom_median':
             with torch.no_grad():
                 model_sample_weight_dict = self.sampling_weight_layer(self.model_dict, self.sampling_layer)
-                # print("model_sample_weight_dict.keys()", model_sample_weight_dict.keys())
                 geo_med, client_weights = geometric_median(model_sample_weight_dict, number_of_clients,
                                                            method='weiszfeld', options={})
-                # client_weights save to csv, simplified version to logger
                 malicious_weight_sel = self.malicious_weight_percentage(client_weights, self.malicious_names)
                 ordered_client_w_values = self.ordered_client_weight_values(client_weights)
                 self.weights_csv_logger.append_csv(ordered_client_w_values + [malicious_weight_sel])
@@ -1833,8 +1373,6 @@ class Helper:
                     else:
                         self.memory_dict[name] = [weight]
 
-                # print("len of model1", len(self.memory_dict["model1"]))
-
                 historical_weights = {}
                 for name, weights in self.memory_dict.items():
                     for w in weights:
@@ -1844,12 +1382,6 @@ class Helper:
                             historical_weights[name] = w
 
                 client_weights = foolsgold(historical_weights)
-
-                # debugging with different aggregation rules
-                # client_weights = foolsgold(model_sample_weight_dict)
-                # client_weights = pendulum(model_sample_weight_dict, self.count)
-
-                # self.count += 1
                 malicious_weight_sel = self.malicious_weight_percentage(client_weights, self.malicious_names)
                 ordered_client_w_values = self.ordered_client_weight_values(client_weights)
                 self.weights_csv_logger.append_csv(ordered_client_w_values + [malicious_weight_sel])
@@ -1894,14 +1426,11 @@ class Helper:
                         1 - self.contra_f)) + self.contra_f
             key_list = list(self.contra_sorted_dict.keys())
             value_list = list(self.contra_sorted_dict.values())
-            # agent_name_keys = random.choices(key_list, weights=value_list, k=self.params["contra_clients_selection"])
             # in case value_list has negative values
             if min(value_list) < 0:
                 value_list = [x - min(value_list) for x in value_list]
             agent_name_keys = np.random.choice(key_list, self.params["contra_clients_selection"],
                                                p=value_list / np.sum(value_list), replace=False)
-            # agent_name_keys = list(set(agent_name_keys))
-            # print("len of agent_name_keys", len(agent_name_keys))
 
             logger_line = []
             for name in agent_name_keys:
@@ -1934,16 +1463,10 @@ class Helper:
             # use foolsgold
             selected_model_dict = dict()
 
-            # print("self.model_dict keys", self.model_dict.keys())
-            # print("agent_name_keys", agent_name_keys)
-
             with torch.no_grad():
                 for name, weight in self.model_dict.items():
                     if name in agent_name_keys:
                         selected_model_dict[name] = weight
-                # print("len of selected_model_dict", len(selected_model_dict))
-                # print("selected model dict keys", selected_model_dict.keys())
-
                 contra_sample_weight_dict = self.sampling_weight_layer(selected_model_dict, self.sampling_layer)
 
             # update the reputation dict
@@ -2011,11 +1534,6 @@ class Helper:
                     logger_line.append(pair)
 
             mistakes = [i for i in krum_clients if i in self.malicious_names]
-            # for name, score in muti_krum_m:
-            #     if int(name[5:]) in mistakes:
-            #         name = name + "_M"
-            #     pair = "{}: {:.4f}".format(name, score)
-            #     logger_line.append(pair)
 
             if len(mistakes) > 0:
                 logger.info(f"mistakenly chosen: {mistakes}")
@@ -2024,18 +1542,12 @@ class Helper:
         return weight_accumulator
 
     def malicious_weight_percentage(self, client_weights, malicious_names):
-        # print("client_weights", client_weights)
-        # print("malicious_names", malicious_names)
         malicious_weight = 0
         for key, value in client_weights.items():
             if int(key[5:]) in malicious_names:
                 # print("key", key, value)
                 malicious_weight += value
         total_weights = sum(client_weights.values())
-
-        # print("malicious_weight", malicious_weight)
-        # print("total_weights", total_weights)
-        # print("mali percentage", malicious_weight/total_weights)
         return malicious_weight / total_weights
 
     def ordered_client_weight_values(self, client_weights):
@@ -2072,20 +1584,7 @@ class Helper:
         for name, param in model_dict[name_of_models[0]].state_dict().items():
             struct = torch.zeros(size=param.size(), device=self.cuda_device)
             weighted_updates[name] = struct
-
-        # print("clients_weights.keys()", clients_weights.keys())
-        # for w, p in zip(clients_weights, model_dict):
-        #     for name, data in weighted_updates.items():
-        #         # print("w", w)
-        #         temp = (clients_weights[w] / tot_weights).to(self.device)
-        #         print ("p", p)
-        #         temp = temp * torch.tensor(p[name]).to(self.device)
-        #
-        #         data = data.to(self.device)
-        #
-        #         if temp.dtype!=data.dtype:
-        #             temp = temp.type_as(data)
-        #         data.add_(temp)
+            
         for client_name in model_dict:
             for name, param in weighted_updates.items():
                 weighted_updates[name] += (clients_weights[client_name] / tot_weights) * get_layer_weight(
@@ -2146,32 +1645,10 @@ class Helper:
         name_of_models = list(model_dict.keys())
         with torch.no_grad():
             for i in range(len(model_dict)):
-                # for name, param in main_model.named_parameters():
-                #     layer = name.split('.')[0]
-                #     seg = name.split('.')[-1]
-                #     getattr(getattr(model_dict[self.name_of_models[i]], layer), seg).data = \
-                #         getattr(getattr(main_model, layer), seg).data.clone()
                 for name, param in main_model.state_dict().items():
-                    # layer = name.split('.')[0]
-                    # seg = name.split('.')[-1]
-                    # getattr(getattr(model_dict[self.name_of_models[i]], layer), seg).data = \
-                    #     getattr(getattr(main_model, layer), seg).data.clone()
-                    # if if_reverse is False:
 
                     get_layer_weight(model_dict[name_of_models[i]], name).data = \
                         get_layer_weight(main_model, name).data.clone()
-
-                    # else:
-                    #     # print("type before torch.neg", type(get_layer_weight(main_model, name)))
-                    #     # to fix, gradient to reverse, not weight
-                    #     get_layer_weight(model_dict[name_of_models[i]], name).data = \
-                    #         torch.neg(self.params['reverse_grad_epsilon']*
-                    #                   get_layer_weight(main_model, name).data).clone()
-
-                    # indices = torch.tensor([0, 1]).to(device)
-                    # print("Org tensor", torch.index_select(get_layer_weight(main_model, name).data, 0, indices))
-                    # print("Negative tensor",
-                    #       torch.index_select(get_layer_weight(model_dict[name_of_models[i]], name).data, 0, indices))
 
         return model_dict
 
@@ -2344,29 +1821,21 @@ def check_action_domain(action, domain):
 
 
 def get_weights_from_model_dict(model_dict):
-    """
-    weights_dict = {}
-    for key, value in model_dict.items():
-        # print("get_layer_weight(value, layer_name)", get_layer_weight(value, layer_name))
-        weights = {}
-        for layer_name in self.main_model.state_dict().keys():
-            weight = get_layer_weight(value, layer_name).detach().clone()
-            weights[layer_name] = weight
-        weights_dict[key] = weights
-    return weights_dict
-    """
     model_dict_copy = copy.deepcopy(model_dict)
     return model_dict_copy
 
 def client_random_selection(model_dict, num_clients, m):
-    idxs_clients = np.random.choice(range(num_clients), m, replace=False)
+    if m != None:
+        idxs_clients = np.random.choice(range(num_clients), m, replace=False)
 
-    model_names = []
-    for i in idxs_clients:
-        model_names.append("model" + str(i))
-    
-    selected_model_dict = {k: model_dict[k] for k in model_names}
-    return selected_model_dict, idxs_clients
+        model_names = []
+        for i in idxs_clients:
+            model_names.append("model" + str(i))
+        
+        selected_model_dict = {k: model_dict[k] for k in model_names}
+        return selected_model_dict, idxs_clients
+    else:
+        return model_dict, list(range(num_clients))
 
 class EarlyStopping:
     def __init__(self, tolerance=3, min_delta=0.5):

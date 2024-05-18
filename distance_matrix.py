@@ -65,7 +65,3 @@ class Distance():
         var2 = torch.sqrt(self.kernel_HSIC(Y, Y, sigma))
         return hsic / (var1 * var2)
 
-    # KLD relative entropy
-    # @staticmethod
-    # def kld(grad1, grad2):
-    #     return(kl_divergence(grad1, grad2))

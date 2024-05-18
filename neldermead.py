@@ -345,24 +345,6 @@ def generate_init_triangle(x_start, center, r):
     return triangle
 
 
-"""# discrete domain
-def create_domain_net(x_domain, scale):
-    net = []
-    for i in range(len(x_domain)):
-        start = x_domain[i][0]
-        end = x_domain[i][-1]
-        sub = x_domain[i][:-1].copy()
-        tick = start + scale
-
-        while tick < end:
-            # print("he")
-            sub = np.append(sub, tick)
-            tick += scale
-        sub = np.append(sub, end)
-        net.append(sub)
-    return net
-"""
-
 def find_middle(input_list):
     middle = float(len(input_list)) / 2
     if middle % 2 != 0:
