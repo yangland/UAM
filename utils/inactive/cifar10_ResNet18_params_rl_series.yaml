@@ -1,0 +1,69 @@
+---
+if_series: True
+type: cifar10
+number_of_clients: 40
+learning_rate: 0.01
+iterations: 40 #40
+early_stopping: False
+early_stopping_tolerance: 3
+early_stopping_min_delta: 0.005
+numEpoch: 10 # 10
+batch_size: 32
+momentum: 0.9
+server_lr_fix: True
+server_lr: 0.5 # 0.05
+server_lr_decay: 'NA'
+server_lr_floor: 'NA'
+if_noniid_s: [True] # [False, True]
+dirichlet_alpha_s: [0.2, 1.0, 20]
+num_classes: 10
+train_amount: 4500
+random_seed: 0
+nn_model: ResNet18
+class_names: ['plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
+
+# Model integrity check
+check_integrity: False
+
+# Aggregation Methods
+sampling_layer: 'linear.weight'
+available_layers: ['linear.weight', 'layer4.1.bn2.weight']
+# allowed values are: ['fedavg', 'geom_median', 'krum', 'foolsgold', 'contra']
+aggregation_method_s: ['fedavg', 'geom_median', 'krum']
+krum_f: 15 # < 40/2 - 1
+krum_m: 1
+history_len: 1
+contra_f: 0.1
+contra_clients_selection: 10
+
+# Malicious Clients
+malicious_attack_s: [True]
+number_of_malicious_s: [16, 8]
+# untargeted1 y = existed y label + 1, 1->2, ... , 9 -> 1
+# untargeted2 y = existed y label -> random label of all class with same probability
+# malicious_modes: 'untargeted2' # 'untargeted1', 'untargeted2', 'label_flipping', 'backdoor'
+
+# RL based Malicious Attack
+rl_based_attack: True
+x_start: [0, 0]
+step: 1.25
+zoom_factor_base: 10 #10, 4, 2
+sigmoid_c1: 0.5
+effective_action_domain: [[-4, 4], [-3, 1]] # [[-4, 4], [-5, 2]]
+empirical_points: [[-2.0, -1.0], [0.0, -1.0], [2.0, 2.0]] # empty list means not consider empirical_points
+rounds_before_restart: 6
+rl_manual: False
+manual_coordinates: [-2.0, -2.0]
+Goal: 'untargeted'
+
+malicious_proportion: [['untargeted', 1, -1, -1]]
+
+# Visualization
+weights_layer: 'linear.weight'
+distance_matrix: 'cos' # 'cos', 'l2', 'cka'
+plot_individual: False
+plot_global: True
+plot_train: True
+plot_rl: True
+each_layer_list: [[4, 1]]
+create_video: False
