@@ -33,6 +33,7 @@ from csv_logging import Csv_logging
 from distance_matrix import Distance
 from collections import Counter
 from neldermead import *
+from utilities import *
 from collections import OrderedDict
 
 from aggr.geometric_median import geometric_median
@@ -82,10 +83,6 @@ class Helper:
         self.pool_dl = None
         self.search_dimension = len(self.params['x_start'])
         self.step = self.params['step']
-        if self.params['rl_manual']:
-            self.rl_action = np.asarray([float(i) for i in self.params['manual_coordinates']])
-        else:
-            self.rl_action = np.asarray([float('Inf') for i in self.params['x_start']])
         self.current_time = current_time
         self.name = name
         self.aggregation_method = self.params['aggregation_method']
@@ -111,6 +108,11 @@ class Helper:
             self.clients_selection = None
         else:
             self.clients_selection = int(self.params['select_precentage'] * self.number_of_clients / 100)
+
+        if self.params['rl_manual']:
+            self.rl_action = np.asarray([float(i) for i in self.params['manual_coordinates']])
+        else:
+            self.rl_action = np.asarray([float('Inf') for i in self.params['x_start']])
 
         if self.if_series:
             self.master_path = f'./logs/series_{self.name}_{series_time}'
@@ -175,7 +177,7 @@ class Helper:
         self.contra_sorted_dict = dict()
 
         # create the object of Naive_Mcts class
-        if self.attack_method == 'RL':
+        if self.attack_method == 'UAM':
             self.g_main = [[-1, -1], [-1, -1]]
 
             self.neldermead = NelderMead(name='NelderMead1', x_start=self.rl_action, step=self.step, progress=True,
@@ -203,11 +205,11 @@ class Helper:
             logger.info(f"{key} total {str(len(self.y_train_dict[key]))}: {str(sorted(c.items()))}")
 
         if self.params['malicious_attack'] is True:
-            if self.attack_method != 'RL':
+            if self.attack_method != 'UAM':
                 logger.info(
                     f"with {self.attack_method} malicious attack, {len(self.malicious_dict)} group(s), malicious clients id:")
             else:
-                logger.info(f"with RL malicious attack, {len(self.malicious_dict)} group, malicious clients id:")
+                logger.info(f"with UAM malicious attack, {len(self.malicious_dict)} group, malicious clients id:")
             logger.info(f"malicious names: {self.malicious_names}")
             logger.info(f"malicious proportion: {self.malicious_dict}")
 
@@ -230,7 +232,7 @@ class Helper:
             self.pool_dl = DataLoader(pool_ds, batch_size=self.params['batch_size'], shuffle=True)
 
             if self.attack_method == 'explicit boosting':
-                # in non-RL based attack the malicious dataset is fixed, created before the train_iteration starts
+                # in EB attack the malicious dataset is fixed, created before the train_iteration starts
                 for i, param in self.malicious_dict.items():
                     malicious_mode = "untargeted1"
                     malicious_group_list = param[1]
@@ -248,10 +250,10 @@ class Helper:
 
                 self.name_of_x_train_m_sets = list(self.x_train_m_dict.keys())
                 self.name_of_y_train_m_sets = list(self.y_train_m_dict.keys())
-            elif self.attack_method == 'RL':
-                # in RL based attack, the malicious dataset in changing in each iteration
-                assert len(self.malicious_dict) == 1, "RL based attack only support 1 group of malicious"
-                # RL based attack need different malicious dataset every iteration
+            elif self.attack_method == 'UAM':
+                # in UAM attack, the malicious dataset in changing in each iteration
+                assert len(self.malicious_dict) == 1, "UAM attack only support 1 group of malicious"
+                # UAM attack need different malicious dataset every iteration
         else:
             self.malicious_names = []
 
@@ -292,7 +294,7 @@ class Helper:
             self.model_dict = self.send_main_model_to_nodes_and_update_model_dict(self.main_model, self.model_dict)
 
             if self.params['malicious_attack']:
-                if self.attack_method == 'RL':
+                if self.attack_method == 'UAM':
                     # 1. Record the reward from the previous round with the current feedback
                     # self.mali_mcts.record(mali_accuracy_record, mali_asr_record)
                     self.neldermead.record(mali_accuracy_record, self.rl_action, progress=True)
@@ -386,7 +388,7 @@ class Helper:
                                                            self.sigmoid_c1,
                                                            self.params['action_conv_func'], self.params['rl_mode'])
 
-            if self.attack_method == 'RL':
+            if self.attack_method == 'UAM':
                 if self.rl_mode == "untargeted_label_flip":
                     g_locals = self.malicious_goals_on_goal_conc(goal_conc)
                     logger.info("g_locals: ")
@@ -497,10 +499,7 @@ class Helper:
                         for layer_name, param in self.main_model.state_dict().items():
                             get_layer_weight(self.model_dict[model_name], layer_name).data = \
                                 mal_updates[layer_name]
-
-            elif self.attack_method == 'min-sum':
-                pass
-            elif self.attack_method == 'RL':
+            elif self.attack_method == 'UAM':
                 if rl_mode == "untargeted_label_flip":
                     for model_name in self.model_dict.keys():
                         if int(model_name[5:]) in self.malicious_names:
@@ -545,7 +544,6 @@ class Helper:
                                 single_layer = torch.flatten(
                                     get_layer_weight(self.model_dict[model_name], layer_name).data.clone())
                                 layers.append(single_layer)
-                                # print("single_layer", single_layer)
                             t = torch.stack(layers)
                             mean_t = torch.mean(t.float(), 0)
 
@@ -577,8 +575,6 @@ class Helper:
 
     def malicious_goals_on_goal_conc(self, goal_conc):
         g_main = self.g_main
-        # miss_mapped_classes = [i[0] for i in g_main]
-        # g_iter = None
         g_locals = {}
 
         for i in self.malicious_names:
@@ -615,7 +611,7 @@ class Helper:
 
         if viewpoint == 'god':
             # csv logger train, accuracy loss
-            if self.attack_method == 'RL':
+            if self.attack_method == 'UAM':
                 act1 = self.rl_action[0]
                 if len(self.rl_action) == 2:
                     act2 = self.rl_action[1]
@@ -720,7 +716,7 @@ class Helper:
             malicious_mode = 'None'
             goal = [-1, -1]
             malicious_dict[0] = [malicious_mode, malicious_preprocessing, goal]
-        elif self.attack_method == 'RL':
+        elif self.attack_method == 'UAM':
             malicious_mode = 'None'
 
             if self.params['Goal'] == 'untargeted':
@@ -887,6 +883,8 @@ class Helper:
                     transforms.ToTensor(),
                     transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
                 ])
+            # Please add downloaded file to "./data/"
+            # https://s3.amazonaws.com/fast-ai-imageclas/imagenette2-160.tgz
             self.train_dataset = datasets.ImageFolder("./data/imagenette2-160/train", transform)
             self.test_dataset = datasets.ImageFolder("./data/imagenette2-160/val", transform)
         else:
@@ -924,7 +922,7 @@ class Helper:
                 sample_name = "sample" + str(i)
                 sample_list = []
                 # IID distribution, each number class gets same samples
-                for j in range(num_classes):  # for each number 0 - 9
+                for j in range(num_classes):  # for each class
                     label_name = str("label") + str(j)
                     a = label_dict[label_name][i * batch_size:(i + 1) * batch_size]
                     sample_list.extend(a)
@@ -971,7 +969,6 @@ class Helper:
                     sets_per_class[label] = math.floor(len(indices) / (number_of_clients * theta)) - 1
 
                 for sample in range(number_of_clients):
-                    # print(sample, "class_ids", class_ids, sets_per_client)
                     if len(class_ids) > sets_per_client:
                         selected_class_ids = random.sample(class_ids, sets_per_client)
                     else:
@@ -1044,12 +1041,11 @@ class Helper:
         attack_success_rate_dict = {}
 
         targeted_goals = dict()
-        if self.attack_method == 'RL':
+        if self.attack_method == 'UAM':
             if self.g_main not in ['untargeted']:
                 for i in self.g_main:
                     targeted_goals[str(i[0]) + "," + str(i[1])] = [[0, 'label_flipping']]
         elif self.attack_method == 'explicit boosting':
-            # print("self.malicious_dict", self.malicious_dict)
             for i, param in self.malicious_dict.items():
                 if param[0] not in ['untargeted1', 'untargeted2']:
                     # [['label_flipping', 1, 1, 7]]
@@ -1076,14 +1072,8 @@ class Helper:
                 if self.params['type'] == 'mnist':
                     # convert data from [64, 1, 28, 28] to [64, 784]
                     data = torch.flatten(data, 1)
-                elif self.params['type'] == 'cifar10':
+                elif self.params['type'] in ['cifar10', 'fashion_mnist', 'emnist', 'kmnist', 'cifar100', 'imagenette']:
                     # print("data.shape", data.shape) # [64, 3, 32, 32] # 64 as 2 * batch size
-                    data = data
-                elif self.params['type'] == 'emnist':
-                    data = data
-                elif self.params['type'] == 'kmnist':
-                    data = data
-                elif self.params['type'] == 'fashion_mnist':
                     data = data
                 else:
                     warnings.warn("data type not in helper.validation")
@@ -1570,8 +1560,6 @@ class Helper:
                 [x for x in self.params['available_layers'] if x not in [self.sampling_layer]], \
                 1, replace=False)
 
-            # to add cos similiary comparsion
-
         return
 
     def weighted_average(self, model_dict, clients_weights):
@@ -1629,7 +1617,6 @@ class Helper:
                             1. / (1. + self.server_lr_decay * iteration))  # if iteration is in decay schedule
                     if self.server_lr < self.server_lr_floor:
                         self.server_lr = self.server_lr_floor
-                    # self.server_lr *= (1. / (1. + self.server_lr_decay ))
             else:
                 # fixed learning rate without a changing schedule
                 logger.info(f"server lr: {self.server_lr}")
@@ -1700,160 +1687,3 @@ class Helper:
                 distances.append(d.item())
             resultTable.append(distances)
         return (resultTable)
-
-
-# other utility functions
-def unique(sequence):
-    seen = set()
-    return [x for x in sequence if not (x in seen or seen.add(x))]
-
-
-def domain_without_edge(domain, step):
-    new_domain = None
-    if len(domain) == 2:
-        x_max = max(domain[0])
-        x_min = min(domain[0])
-        y_max = max(domain[1])
-        y_min = min(domain[1])
-        new_domain = [[x_min + step, x_max - step], [y_min + step, y_max - step]]
-    elif len(domain) == 1:
-        x_max = max(domain[0])
-        x_min = min(domain[0])
-        new_domain = [[x_min + step, x_max - step]]
-    return new_domain
-
-
-def get_furthest_point(node, points):
-    dists = []
-    for i in range(len(points)):
-        dists.append(np.linalg.norm((points[i], node)))
-    ind = dists.index(max(dists))
-    return points[ind]
-
-
-def find_corners(domain, step):
-    x_min = min(domain[0])
-    x_max = max(domain[0])
-    y_min = min(domain[1])
-    y_max = max(domain[1])
-    return ([[x_max - step, y_min + step], [x_min + step, y_min + step], [x_max - step, y_max - step],
-             [x_max - step, y_max - step]])
-
-
-def gen_random_from_domain(domain):
-    x_min = min(domain[0])
-    y_min = min(domain[1])
-    x_len = max(domain[0]) - x_min
-    y_len = max(domain[1]) - y_min
-
-    x = x_min + random.random() * x_len
-    y = y_min + random.random() * y_len
-
-    return [x, y]
-
-
-def create_mismatch_mapping(to_map):
-    target_map = to_map.copy()
-    full_mismatch = False
-
-    while full_mismatch is False:
-        random.shuffle(target_map)
-        for i in range(len(to_map)):
-            if target_map[i] != to_map[i]:
-                if i == len(to_map) - 1:
-                    return list(map(list, zip(to_map, target_map)))
-                else:
-                    continue
-            else:
-                # print("break")
-                break
-
-
-def get_layer_weight(model, name_list):
-    splitted = name_list.split('.')
-    result = model
-    for p in splitted:
-        result = getattr(result, p)
-    return result
-
-
-def action_to_params(action, sigmoid_c1, action_conv_func, rl_mode):
-    """
-    Map goal_conc to Sigmoid [0, 1]
-    Map attack_magnitude to a**x a>0 [0, inf] (old)
-    Map attack_magnitude to Sigmoid [0, 2]
-    """
-
-    if action_conv_func == '0-8':
-        attack_magnitude = 8 / (1 + np.exp(-(action[0] - 2.75) * sigmoid_c1))
-    elif action_conv_func == '0-10':
-        attack_magnitude = 10 / (1 + np.exp(-(action[0] - 3.1) * sigmoid_c1))
-    elif action_conv_func == '0-2':
-        attack_magnitude = 2 / (1 + np.exp(-action[0] * sigmoid_c1))
-    elif action_conv_func == 'set2':
-        attack_magnitude = 10 / (1 + np.exp(-(action[0] - 1.1) * 2))
-    elif action_conv_func == 'set3':
-        attack_magnitude = 10 / (1 + np.exp(-(action[0] - 2.0) * 0.4))
-    else:
-        warnings.warn("unknown action_conv_func")
-        return -1, -1
-
-    goal_conc = None
-    if len(action) == 1:
-        pass
-    elif len(action) == 2:
-        if rl_mode == 'reverse_grad':
-            goal_conc = 10 / (1 + np.exp(-action[1] * sigmoid_c1)) - 1
-        elif rl_mode == 'untargeted_label_flip':
-            goal_conc = 1 / (1 + np.exp(-action[1] * sigmoid_c1))
-    else:
-        warnings.warn("action to params only support action in 1, 2 dimension(s)")
-        return None
-    return goal_conc, attack_magnitude
-
-
-def check_action_domain(action, domain):
-    # check if the rl_action is within domain
-    for j in range(len(action)):
-        if action[j] > domain[j][-1] or action[j] < domain[j][0]:
-            return False
-    return True
-
-
-def get_weights_from_model_dict(model_dict):
-    model_dict_copy = copy.deepcopy(model_dict)
-    return model_dict_copy
-
-def client_random_selection(model_dict, num_clients, m):
-    if m != None:
-        idxs_clients = np.random.choice(range(num_clients), m, replace=False)
-
-        model_names = []
-        for i in idxs_clients:
-            model_names.append("model" + str(i))
-        
-        selected_model_dict = {k: model_dict[k] for k in model_names}
-        return selected_model_dict, idxs_clients
-    else:
-        return model_dict, list(range(num_clients))
-
-class EarlyStopping:
-    def __init__(self, tolerance=3, min_delta=0.5):
-        self.tolerance = tolerance
-        self.min_delta = min_delta
-        self.counter = 0
-        self.early_stop = False
-        self.kpi = None
-
-    def __call__(self, kpi):
-        if self.kpi is None:
-            self.kpi = kpi
-        else:
-            if abs(kpi - self.kpi) <= self.min_delta:
-                self.counter += 1
-                if self.counter >= self.tolerance:
-                    self.counter = 0
-                    self.early_stop = True
-            else:
-                self.counter = 0
-                self.kpi = kpi

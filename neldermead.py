@@ -95,7 +95,7 @@ class NelderMead:
                     return False
         elif self.mode == 'centroid':
             # order
-            logger.info(f"self.res: {self.res}")
+            # logger.info(f"self.res: {self.res}")
             self.res = sorted(self.res, key=lambda x: x[1])
 
             # print("centroid len self.res:", len(self.res))

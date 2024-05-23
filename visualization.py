@@ -164,7 +164,7 @@ def plot_node_w_order(folder_path, history):
     y = [point[1] for point in improved_nodes]
 
     ax.scatter(x, y, color='red')
-    title_string = "RL agent search path"
+    title_string = "UAM agent search path"
     plt.title(title_string, fontsize=15)
     plt_name = 'rl_search_path' + '.png'
 
@@ -216,7 +216,7 @@ def plot_uam_search(nodes, history, v, folder_path, x, y, plot_name):
     y = [point[0][j] for point in improved_nodes]
 
     ax.scatter(x, y, color='red')
-    title_string = "RL agent search path"
+    title_string = "UAM agent search path"
     plt.title(title_string, fontsize=15)
     plt_name = 'rl_search_path_' + plot_name + '.png'
 

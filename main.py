@@ -56,9 +56,9 @@ def exp_w_plotting(current_time, series_time, params_loaded, cuda_device):
     logger.info(f'training done')
 
 
-    # RL's dominate strategy
+    # UAM's dominate strategy
     dominate_strategy = None
-    if params_loaded['attack_method'] == 'RL':
+    if params_loaded['attack_method'] == 'UAM':
         dominate_strategy = helper.neldermead.get_dominate_strategy()
         print("dominate_strategy", dominate_strategy)
 
@@ -194,6 +194,7 @@ def main():
     parser = argparse.ArgumentParser(description='PPDL')
     parser.add_argument('--params', dest='params')
     args = parser.parse_args()
+    series_csv_logger = Csv_logging('series', [], 1, [])
 
     with open(f'./{args.params}', 'r') as f:
         # dictionary
@@ -203,7 +204,6 @@ def main():
     cuda_device = params_loaded['cuda_device']
 
     if params_loaded['if_series']:
-
         # move the parameter files in the same directory
         dataset_name = params_loaded['type']
         master_path = f'./logs/series_{dataset_name}_{curr_time}'
@@ -218,8 +218,8 @@ def main():
     else:
         # one experiment
         exp_w_plotting(curr_time, curr_time, params_loaded, cuda_device)
-
+        # run_exp_once(params_loaded, curr_time, params_loaded, 1, 1, dataset_name, cuda_device)
+        
 
 if __name__ == '__main__':
-    series_csv_logger = Csv_logging('series', [], 1, [])
     main()

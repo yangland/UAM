@@ -1,0 +1,94 @@
+Running Parameters:
+if_series:  False
+cuda_device:  4
+type:  mnist
+number_of_clients:  20
+learning_rate:  0.001
+iterations:  10
+early_stopping:  False
+early_stopping_tolerance:  3
+early_stopping_min_delta:  0.005
+numEpoch:  5
+batch_size:  32
+momentum:  0.9
+server_lr_fix:  True
+server_lr:  0.1
+server_lr_decay:  0.001
+server_lr_floor:  0.005
+if_noniid:  True
+dirichlet_alpha:  10
+if_quantity_based_noniid:  False
+quantity_based_theta:  0.2
+num_classes:  10
+train_amount:  5400
+random_seed:  0
+nn_model:  Mnist_3L
+class_names:  ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+check_integrity:  False
+sampling_layer:  fc3.weight
+available_layers:  ['fc1.weight', 'fc2.weight', 'fc3.weight']
+aggregation_method:  fedavg
+pre_aggregation_method:  None
+krum_f:  8
+krum_m:  6
+history_len:  1
+contra_f:  0.1
+contra_clients_selection:  10
+trimmed_mean_m:  4
+bulyan_m:  4
+number_of_malicious:  2
+attack_method:  UAM
+rl_mode:  reverse_grad
+x_start:  [0.0]
+step:  1.0
+sigmoid_c1:  0.5
+sigmoid_c2:  0.7
+sigmoid_a1:  2.0
+effective_action_domain:  [[-4, 4]]
+empirical_points:  [[-4.0], [0.0], [4.0]]
+rounds_before_restart:  5
+rl_manual:  False
+manual_coordinates:  [10]
+action_conv_func:  0-10
+Goal:  untargeted
+Median_att:  False
+malicious_proportion:  [['untargeted', 1, -1, -1]]
+weights_layer:  fc3.weight
+distance_matrix:  cos
+plot_individual:  False
+plot_global:  False
+plot_train:  True
+plot_rl:  True
+each_layer_list:  [[4, 1]]
+create_video:  False
+environment_name:  mnist
+current_time:  May.23_12.35.13
+folder_path:  ./logs/mnist_May.23_12.35.13
+
+helper done
+device: cuda:4 - cuda - NVIDIA RTX A5000
+Network Structure: Mnist 3 layers
+(0, 'fc1.weight', [200, 784])
+(1, 'fc1.bias', [200])
+(2, 'fc2.weight', [200, 200])
+(3, 'fc2.bias', [200])
+(4, 'fc3.weight', [10, 200])
+(5, 'fc3.bias', [10])
+weights_sample: [[4, [7, 193]]]
+initialization done
+reading data done
+build_classes_dict done
+spot check on y_train_dict:
+y_train5 total 2197: [(0, 117), (1, 224), (2, 250), (3, 348), (4, 285), (5, 139), (6, 154), (7, 234), (8, 227), (9, 219)]
+y_train10 total 2848: [(0, 213), (1, 259), (2, 221), (3, 395), (4, 253), (5, 264), (6, 257), (7, 282), (8, 253), (9, 451)]
+with UAM malicious attack, 1 group, malicious clients id:
+malicious names: [1, 18]
+malicious proportion: {0: ['untargeted', [1, 18], [[0, 3], [1, 7], [2, 5], [3, 8], [4, 0], [5, 6], [6, 2], [7, 9], [8, 1], [9, 4]]]}
+Classes distribution on the pooled data (one malicious group, 2 members):
+total 5521: [(0, 758), (1, 487), (2, 504), (3, 619), (4, 512), (5, 636), (6, 412), (7, 600), (8, 620), (9, 373)]
+start training iterations:
+
+Iteration 1:
+(mali) main_model accuracy % on all test data: 5.65
+NelderMead's action: [0.0]
+training on the end nodes...
