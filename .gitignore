@@ -165,3 +165,5 @@ logs//data/
 *.zip
 *.pt
 *.pth
+
+logs/
