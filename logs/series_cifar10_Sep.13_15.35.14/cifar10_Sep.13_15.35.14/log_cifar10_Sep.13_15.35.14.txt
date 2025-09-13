@@ -1187,3 +1187,12 @@ server lr: 0.1
 Iteration 120:
 (mali) main_model accuracy % on all test data: 69.06
 training on the end nodes...
+FLAME non-zero weights: ['model1: 0.1429', 'model2_M: 0.1429', 'model3: 0.1429', 'model4_M: 0.1429', 'model6_M: 0.1429', 'model7: 0.1429', 'model8: 0.1429']
+FLAME zero weights: ['model0: 0.0000', 'model5: 0.0000', 'model9: 0.0000', 'model10: 0.0000', 'model11: 0.0000']
+malicious weight selected %: 42.86
+server lr: 0.1
+(god) main_model accuracy % on all test data: 56.46
+
+Iteration 121:
+(mali) main_model accuracy % on all test data: 69.69
+training on the end nodes...
