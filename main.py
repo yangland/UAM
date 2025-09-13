@@ -154,7 +154,7 @@ def run_exp_series(params_loaded, series_time, dataset_type, cuda_device, csv_lo
 
     # If you want a NO baseline, you must include 0 malicious clients somewhere.
     # Either put 0 in the YAML or enforce it here:
-    if 'NO' in attack_method_s and 0 not in number_of_malicious_s:
+    if 'None' in attack_method_s and 0 not in number_of_malicious_s:
         number_of_malicious_s = list(number_of_malicious_s) + [0]
 
 
@@ -172,9 +172,9 @@ def run_exp_series(params_loaded, series_time, dataset_type, cuda_device, csv_lo
                 for attack_method in attack_method_s:
                     for nm in number_of_malicious_s:
                         # prune contradictory combos
-                        if attack_method == 'NO' and nm != 0:
+                        if attack_method == 'None' and nm != 0:
                             continue
-                        if attack_method != 'NO' and nm == 0:
+                        if attack_method != 'None' and nm == 0:
                             continue
 
                         params = dict()
