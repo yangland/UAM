@@ -1,10 +1,10 @@
 ---
 if_series: True
-cuda_device: 6
+cuda_device: 3
 type: cifar10
 number_of_clients: 12
 learning_rate: 0.01 # 0.01, 0.05
-iterations: 50 #10, 24
+iterations: 200 #10, 24
 early_stopping: False
 early_stopping_tolerance: 3
 early_stopping_min_delta: 0.0
@@ -17,7 +17,7 @@ server_lr_decay: 'NA'
 server_lr_floor: 'NA'
 if_noniid_s: [True] # [False, True]
 # dirichlet_alpha
-dirichlet_alpha_s: [1.0] # [0.2, 1.0]
+dirichlet_alpha_s: [0.1, 1.0] # [0.2, 1.0]
 num_classes: 10
 train_amount: 4500
 random_seed: 0
@@ -35,7 +35,7 @@ available_layers: ['fc_layer.1.weight', 'fc_layer.3.weight', 'fc_layer.6.weight'
 #aggregation_method_s: ['geom_median', 'single-krum', 'coordinate_wise_median']
 #pre_aggr_method_s: ['NNM', 'bucketing', 'None']
 
-aggregation_method_s: [ 'coordinate_wise_median', 'trimmed_mean', 'contra',]
+aggregation_method_s: ['flame']
 pre_aggr_method_s: ['None']
 
 krum_f: 4 # < 40/2 - 1
@@ -52,7 +52,8 @@ number_of_malicious_s: [3, 0]
 # untargeted1 y = existed y label + 1, 1->2, ... , 9 -> 1
 # untargeted2 y = existed y label -> random label of all class with same probability
 # malicious_modes: 'untargeted2' # 'untargeted1', 'untargeted2', 'label_flipping', 'backdoor'
-attack_method: 'RL'
+# attack_method: 'RL'
+attack_method_s: ['None', 'little', 'explicit boosting', 'min-max', 'min-sum', 'RL']
 
 # RL based Malicious Attack
 rl_based_attack: True

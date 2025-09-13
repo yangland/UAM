@@ -33,11 +33,14 @@ class Csv_logging:
 
         self.series_master = []
 
-        self.series_master_fileHeader = ['current_time', 'if_noniid', 'dirichlet_alpha', 'aggregation_method', \
-                                         'pre_aggregation_method', 'malicious_attack', \
-                                         'number_of_malicious', 'malicious_proportion', 'respect_server_model', \
-                                         'malicious_group_agg', 'test_accuracy', 'test_loss', 'dominate_strategy', \
-                                         'attack_success_rate']
+        self.series_master_fileHeader = [
+            'current_time', 'if_noniid', 'dirichlet_alpha', 'aggregation_method',
+            'pre_aggregation_method', 'malicious_attack',
+            'number_of_malicious', 'malicious_proportion', 'attack_method',
+            'malicious_group_agg', 'test_accuracy', 'test_loss', 'dominate_strategy',
+            'attack_success_rate'
+        ]
+
 
 
 
@@ -90,20 +93,30 @@ class Csv_logging:
             weights_writer.writerows(self.client_weights)
             weights_csvFile.close()
 
+    # def append_save_csv(self, record, folder_path, current_time, dataset_type):
+    #     if self.name == 'series':
+    #         path = f'{folder_path}/series_master_{dataset_type}_{current_time}.csv'
+
+    #         if os.path.exists(path):
+    #             # print("os path exists")
+    #             with open(path, 'a', newline='\n') as f_object:
+    #                 # print("writing here")
+    #                 writer_object = writer(f_object)
+    #                 writer_object.writerow(record)
+    #                 f_object.close()
+    #         else:
+    #             series_csvFile = open(path, "w+")
+    #             series_writer = csv.writer(series_csvFile, lineterminator='\n')
+    #             series_writer.writerow(self.series_master_fileHeader)
+    #             series_writer.writerow(record)
+    #         # series_csvFile.close()
+    
     def append_save_csv(self, record, folder_path, current_time, dataset_type):
         if self.name == 'series':
             path = f'{folder_path}/series_master_{dataset_type}_{current_time}.csv'
-
-            if os.path.exists(path):
-                # print("os path exists")
-                with open(path, 'a', newline='\n') as f_object:
-                    # print("writing here")
-                    writer_object = writer(f_object)
-                    writer_object.writerow(record)
-                    f_object.close()
-            else:
-                series_csvFile = open(path, "w+")
-                series_writer = csv.writer(series_csvFile, lineterminator='\n')
-                series_writer.writerow(self.series_master_fileHeader)
-                series_writer.writerow(record)
-            # series_csvFile.close()
+            exists = os.path.exists(path)
+            with open(path, 'a', newline='\n') as f:
+                w = csv.writer(f, lineterminator='\n')
+                if not exists:
+                    w.writerow(self.series_master_fileHeader)
+                w.writerow(record)

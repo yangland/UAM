@@ -92,7 +92,7 @@ def exp_w_plotting(current_time, series_time, params_loaded, cuda_device):
     return test_accuracy_records[-1], test_loss_records[-1], attack_success_rate_records[-1], helper, dominate_strategy
 
 
-def run_exp_once(params_loaded, series_time, curr_master, i, total_num_exp, dataset_type, cuda_device):
+def run_exp_once(params_loaded, series_time, curr_master, i, total_num_exp, dataset_type, cuda_device, series_csv_logger):
     params_loaded['if_noniid'] = curr_master['if_noniid']
     params_loaded['dirichlet_alpha'] = curr_master['dirichlet_alpha']
     params_loaded['aggregation_method'] = curr_master['aggregation_method']
@@ -123,7 +123,7 @@ def run_exp_once(params_loaded, series_time, curr_master, i, total_num_exp, data
         params_loaded['malicious_attack'],
         params_loaded['number_of_malicious'],
         params_loaded['malicious_proportion'],
-        'NA',
+        params_loaded['attack_method'], 
         'NA',
         test_accuracy,
         test_loss,
@@ -133,7 +133,7 @@ def run_exp_once(params_loaded, series_time, curr_master, i, total_num_exp, data
     series_csv_logger.append_save_csv(line, helper.master_path, series_time, dataset_type)
 
 
-def run_exp_series(params_loaded, series_time, dataset_type, cuda_device):
+def run_exp_series(params_loaded, series_time, dataset_type, cuda_device, csv_logger=None):
     if_noniid_s = params_loaded['if_noniid_s']
     dirichlet_alpha_s = params_loaded['dirichlet_alpha_s']
 
@@ -149,6 +149,13 @@ def run_exp_series(params_loaded, series_time, dataset_type, cuda_device):
     aggregation_method_s = params_loaded['aggregation_method_s']
     number_of_malicious_s = params_loaded['number_of_malicious_s']
     pre_aggr_method_s = params_loaded['pre_aggr_method_s']
+    # SAFE read of attack methods (no KeyError even if 'attack_method' is absent)
+    attack_method_s = params_loaded.get('attack_method_s') or [params_loaded.get('attack_method', 'UAM')]
+
+    # If you want a NO baseline, you must include 0 malicious clients somewhere.
+    # Either put 0 in the YAML or enforce it here:
+    if 'NO' in attack_method_s and 0 not in number_of_malicious_s:
+        number_of_malicious_s = list(number_of_malicious_s) + [0]
 
 
     del params_loaded['if_noniid_s']
@@ -158,27 +165,28 @@ def run_exp_series(params_loaded, series_time, dataset_type, cuda_device):
     del params_loaded['number_of_malicious_s']
 
     master_loop = []
+
     for non_i in non_iidness:
         for aggregation_method in aggregation_method_s:
             for pre_agr_method in pre_aggr_method_s:
-                for nm in number_of_malicious_s:
-                    params = dict()
-                    params['attack_method'] = params_loaded['attack_method']
-                    if nm != 0:
+                for attack_method in attack_method_s:
+                    for nm in number_of_malicious_s:
+                        # prune contradictory combos
+                        if attack_method == 'NO' and nm != 0:
+                            continue
+                        if attack_method != 'NO' and nm == 0:
+                            continue
+
+                        params = dict()
                         params['if_noniid'] = non_i[0]
                         params['dirichlet_alpha'] = non_i[1]
                         params['aggregation_method'] = aggregation_method
                         params['number_of_malicious'] = nm
-                        params['pre_aggregation_method'] = pre_agr_method
+                        params['pre_aggregation_method'] = pre_agr_method if nm != 0 else 'None'
+                        # normalize UAM alias
+                        params['attack_method'] = 'UAM' if attack_method in ('UAM', 'RL') else attack_method
+
                         master_loop.append(params)
-                    else:
-                        # zero attacker
-                        params['if_noniid'] = non_i[0]
-                        params['dirichlet_alpha'] = non_i[1]
-                        params['aggregation_method'] = aggregation_method
-                        params['number_of_malicious'] = nm
-                        params['pre_aggregation_method'] = 'None'
-                        master_loop.append(params) if params not in master_loop else master_loop
 
     total_num_exp = len(master_loop)
     print("master_loop", *master_loop, sep='\n')
@@ -186,7 +194,7 @@ def run_exp_series(params_loaded, series_time, dataset_type, cuda_device):
     start_pos = 0
     end_pos = len(master_loop)
     for i in range(start_pos, end_pos):
-        run_exp_once(params_loaded, series_time, master_loop[i], i, total_num_exp, dataset_type, cuda_device)
+        run_exp_once(params_loaded, series_time, master_loop[i], i, total_num_exp, dataset_type, cuda_device, csv_logger)
 
 
 
@@ -213,7 +221,7 @@ def main():
             print(error)
         shutil.copy(args.params, master_path)
 
-        run_exp_series(params_loaded, curr_time, params_loaded['type'], cuda_device)
+        run_exp_series(params_loaded, curr_time, params_loaded['type'], cuda_device, series_csv_logger)
 
     else:
         # one experiment

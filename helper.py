@@ -41,7 +41,7 @@ from aggr.krum import krum
 from aggr.foolsgold import foolsgold, foolsgold_new, pendulum, foolsgold_contra
 from aggr.coordinate_wise_median import coordinate_wise_median, trimmed_mean
 from aggr.mani_byzan import our_attack_dist, our_attack_score
-
+from aggr.flame import flame_aggr, get_model_merged, get_model_update
 
 logger = logging.getLogger("logger")
 
@@ -1014,25 +1014,29 @@ class Helper:
 
     # Training and Validation Functions
     @staticmethod
-    def train_local_model(model, train_loader, criterion, optimizer):
+    def train_local_model(model, train_loader, criterion, optimizer, device=None):
+        if device is None:
+            device = next(model.parameters()).device
         model.train()
         train_loss = 0.0
         correct = 0
 
         for data, target in train_loader:
+            # H2D here (fast path with pin_memory + non_blocking)
+            data = data.to(device, non_blocking=True)
+            target = target.to(device, non_blocking=True)
+
+            optimizer.zero_grad(set_to_none=True)
             output = model(data)
-
             loss = criterion(output, target)
-
-            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
             train_loss += loss.item()
-            prediction = output.argmax(dim=1, keepdim=True)
-            correct += prediction.eq(target.view_as(prediction)).sum().item()
+            correct += (output.argmax(dim=1) == target).sum().item()
 
         return train_loss / len(train_loader), correct / len(train_loader.dataset)
+
 
     def validation(self, model, test_loader, criterion):
         model.eval()
@@ -1163,7 +1167,7 @@ class Helper:
                     optimizer = self.optimizer_dict[self.name_of_optimizers[i]]
 
                     # the local training process
-                    train_loss, train_accuracy = self.train_local_model(model, train_dl, criterion, optimizer)
+                    train_loss, train_accuracy = self.train_local_model(model, train_dl, criterion, optimizer, device=self.cuda_device)
                 else:
                     train_ds = TensorDataset(self.x_train_dict[self.name_of_x_train_sets[i]].to(self.cuda_device),
                                              self.y_train_dict[self.name_of_y_train_sets[i]].to(self.cuda_device))
@@ -1173,7 +1177,7 @@ class Helper:
                     criterion = self.criterion_dict[self.name_of_criterions[i]]
                     optimizer = self.optimizer_dict[self.name_of_optimizers[i]]
 
-                    train_loss, train_accuracy = self.train_local_model(model, train_dl, criterion, optimizer)
+                    train_loss, train_accuracy = self.train_local_model(model, train_dl, criterion, optimizer, device=self.cuda_device)
             if plot_indiv is True:
                 for sample in sample_list:
                     self.plot_node_weights(self.model_dict, sample[0], sample[1], iteration)
@@ -1322,6 +1326,60 @@ class Helper:
 
                 for key, value in weight_accumulator.items():
                     weight_accumulator[key] = value / number_of_clients
+        elif aggregation_method == 'flame':
+            # --- Build client updates relative to the previous server model ---
+            with torch.no_grad():
+                # You likely already have a handle to the server model.
+                # If its name differs, replace `self.server_model` accordingly.
+                server_sd = self.main_model.state_dict()
+
+                # Build client_updates_dict: { "modelX": delta_dict }
+                client_updates_dict = {}
+                for cid, client_model in model_dict.items():
+                    # client_model is an nn.Module in your codebase
+                    client_sd = client_model.state_dict()
+                    client_updates_dict[cid] = get_model_update(client_sd, server_sd)
+
+                # FLAME hyperparams (safely fallback if missing)
+                flame_noise = self.params.get('flame_noise', 1e-3)
+                exp_dir     = self.params.get('exp_dir', "")
+                cur_iter    = getattr(self, "current_iter", 0)
+
+                # Run FLAME: returns (server_grad_delta, client_weights)
+                server_grad, client_weights = flame_aggr(
+                    server_model_state_dict=server_sd,
+                    client_updates_dict=client_updates_dict,
+                    noise=flame_noise,
+                    exp_dir=exp_dir,
+                    iter=cur_iter
+                )
+
+                # Merge delta into absolute new server state (absolute weights)
+                new_server_sd = get_model_merged(server_grad, server_sd, assume_delta=True)
+
+                # --- Logging in your house style ---
+                malicious_weight_sel = self.malicious_weight_percentage(client_weights, self.malicious_names)
+                ordered_client_w_values = self.ordered_client_weight_values(client_weights)
+                self.weights_csv_logger.append_csv(ordered_client_w_values + [malicious_weight_sel])
+
+                logger_line_nonzero = []
+                logger_line_zero    = []
+                for name, w in client_weights.items():
+                    tag = f"{name}_M" if (int(str(name)[5:]) in self.malicious_names) else name
+                    pair = f"{tag}: {w:.4f}"
+                    if w != 0:
+                        logger_line_nonzero.append(pair)
+                    else:
+                        logger_line_zero.append(pair)
+
+                logger.info(f"FLAME non-zero weights: {logger_line_nonzero}")
+                logger.info(f"FLAME zero weights: {logger_line_zero}")
+
+                # Convert state_dict to your expected return format (absolute)
+                weight_accumulator = {}
+                for key, param in model_dict[next(iter(model_dict))].state_dict().items():
+                    # ensure same device/dtype as your pipeline expects
+                    weight_accumulator[key] = new_server_sd[key].to(self.cuda_device).detach().clone()
 
         elif aggregation_method == 'geom_median':
             with torch.no_grad():

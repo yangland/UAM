@@ -1,0 +1,144 @@
+Running Parameters:
+if_series:  True
+cuda_device:  3
+type:  cifar10
+number_of_clients:  12
+learning_rate:  0.01
+iterations:  200
+early_stopping:  False
+early_stopping_tolerance:  3
+early_stopping_min_delta:  0.0
+numEpoch:  10
+batch_size:  32
+momentum:  0.9
+server_lr_fix:  True
+server_lr:  0.1
+server_lr_decay:  NA
+server_lr_floor:  NA
+num_classes:  10
+train_amount:  4500
+random_seed:  0
+nn_model:  Cifar10_18L
+class_names:  ['plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
+check_integrity:  False
+sampling_layer:  fc_layer.1.weight
+available_layers:  ['fc_layer.1.weight', 'fc_layer.3.weight', 'fc_layer.6.weight']
+krum_f:  4
+krum_m:  1
+history_len:  1
+contra_f:  0.1
+contra_clients_selection:  5
+trimmed_mean_m:  4
+bulyan_m:  4
+attack_method_s:  ['NO', 'little', 'explicit boosting', 'min-max', 'min-sum', 'RL']
+rl_based_attack:  True
+rl_mode:  reverse_grad
+x_start:  [0.0]
+step:  1.0
+sigmoid_c1:  0.7
+effective_action_domain:  [[-4, 4]]
+empirical_points:  [[-4.0], [0.0], [4.0]]
+rounds_before_restart:  5
+rl_manual:  False
+manual_coordinates:  [-1.0]
+action_conv_func:  0-10
+Goal:  untargeted
+malicious_proportion:  [['untargeted', 1, -1, -1]]
+weights_layer:  fc_layer.1.weight
+distance_matrix:  cos
+plot_individual:  False
+plot_global:  False
+plot_train:  True
+plot_rl:  True
+each_layer_list:  [[4, 1]]
+create_video:  False
+if_noniid:  True
+dirichlet_alpha:  0.1
+aggregation_method:  flame
+number_of_malicious:  0
+pre_aggregation_method:  None
+attack_method:  NO
+malicious_attack:  False
+environment_name:  cifar10
+current_time:  Sep.13_15.11.53
+folder_path:  ./logs/series_cifar10_Sep.13_15.11.53/cifar10_Sep.13_15.11.53
+
+helper done
+device: cuda:3 - cuda - NVIDIA RTX A5000
+Network Structure: Cifar-10 18 layers
+(0, 'conv_layer.0.weight', [32, 3, 3, 3])
+(1, 'conv_layer.0.bias', [32])
+(2, 'conv_layer.1.weight', [32])
+(3, 'conv_layer.1.bias', [32])
+(4, 'conv_layer.1.running_mean', [32])
+(5, 'conv_layer.1.running_var', [32])
+(6, 'conv_layer.1.num_batches_tracked', [])
+(7, 'conv_layer.3.weight', [64, 32, 3, 3])
+(8, 'conv_layer.3.bias', [64])
+(9, 'conv_layer.6.weight', [128, 64, 3, 3])
+(10, 'conv_layer.6.bias', [128])
+(11, 'conv_layer.7.weight', [128])
+(12, 'conv_layer.7.bias', [128])
+(13, 'conv_layer.7.running_mean', [128])
+(14, 'conv_layer.7.running_var', [128])
+(15, 'conv_layer.7.num_batches_tracked', [])
+(16, 'conv_layer.9.weight', [128, 128, 3, 3])
+(17, 'conv_layer.9.bias', [128])
+(18, 'conv_layer.13.weight', [256, 128, 3, 3])
+(19, 'conv_layer.13.bias', [256])
+(20, 'conv_layer.14.weight', [256])
+(21, 'conv_layer.14.bias', [256])
+(22, 'conv_layer.14.running_mean', [256])
+(23, 'conv_layer.14.running_var', [256])
+(24, 'conv_layer.14.num_batches_tracked', [])
+(25, 'conv_layer.16.weight', [256, 256, 3, 3])
+(26, 'conv_layer.16.bias', [256])
+(27, 'fc_layer.1.weight', [1024, 4096])
+(28, 'fc_layer.1.bias', [1024])
+(29, 'fc_layer.3.weight', [512, 1024])
+(30, 'fc_layer.3.bias', [512])
+(31, 'fc_layer.6.weight', [10, 512])
+(32, 'fc_layer.6.bias', [10])
+weights_sample: [[4, [np.int64(18)]]]
+initialization done
+reading data done
+build_classes_dict done
+spot check on y_train_dict:
+y_train8 total 9896: [(0, 1096), (1, 50), (2, 1), (3, 1787), (4, 516), (5, 1830), (6, 2093), (7, 1), (8, 2510), (9, 12)]
+y_train0 total 2376: [(0, 1), (1, 1), (2, 1577), (3, 1), (4, 54), (5, 737), (6, 1), (7, 1), (8, 1), (9, 2)]
+start training iterations:
+
+Iteration 1:
+training on the end nodes...
+FLAME non-zero weights: ['model0: 0.1429', 'model2: 0.1429', 'model4: 0.1429', 'model6: 0.1429', 'model9: 0.1429', 'model10: 0.1429', 'model11: 0.1429']
+FLAME zero weights: ['model1: 0.0000', 'model3: 0.0000', 'model5: 0.0000', 'model7: 0.0000', 'model8: 0.0000']
+malicious weight selected %: 0.00
+server lr: 0.1
+(god) main_model accuracy % on all test data: 9.74
+
+Iteration 2:
+training on the end nodes...
+FLAME non-zero weights: ['model0: 0.1429', 'model2: 0.1429', 'model4: 0.1429', 'model6: 0.1429', 'model9: 0.1429', 'model10: 0.1429', 'model11: 0.1429']
+FLAME zero weights: ['model1: 0.0000', 'model3: 0.0000', 'model5: 0.0000', 'model7: 0.0000', 'model8: 0.0000']
+malicious weight selected %: 0.00
+server lr: 0.1
+(god) main_model accuracy % on all test data: 10.00
+
+Iteration 3:
+training on the end nodes...
+FLAME non-zero weights: ['model0: 0.1429', 'model2: 0.1429', 'model4: 0.1429', 'model6: 0.1429', 'model9: 0.1429', 'model10: 0.1429', 'model11: 0.1429']
+FLAME zero weights: ['model1: 0.0000', 'model3: 0.0000', 'model5: 0.0000', 'model7: 0.0000', 'model8: 0.0000']
+malicious weight selected %: 0.00
+server lr: 0.1
+(god) main_model accuracy % on all test data: 10.00
+
+Iteration 4:
+training on the end nodes...
+FLAME non-zero weights: ['model0: 0.1429', 'model2: 0.1429', 'model4: 0.1429', 'model6: 0.1429', 'model9: 0.1429', 'model10: 0.1429', 'model11: 0.1429']
+FLAME zero weights: ['model1: 0.0000', 'model3: 0.0000', 'model5: 0.0000', 'model7: 0.0000', 'model8: 0.0000']
+malicious weight selected %: 0.00
+server lr: 0.1
+(god) main_model accuracy % on all test data: 10.00
+
+Iteration 5:
+training on the end nodes...
