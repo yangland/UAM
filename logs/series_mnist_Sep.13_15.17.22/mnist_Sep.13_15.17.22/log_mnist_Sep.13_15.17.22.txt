@@ -709,3 +709,39 @@ server lr: 0.1
 Iteration 70:
 (mali) main_model accuracy % on all test data: 78.83
 training on the end nodes...
+FLAME non-zero weights: ['model2_M: 0.0909', 'model5: 0.0909', 'model6: 0.0909', 'model7: 0.0909', 'model8_M: 0.0909', 'model9_M: 0.0909', 'model10: 0.0909', 'model14: 0.0909', 'model17_M: 0.0909', 'model18: 0.0909', 'model19: 0.0909']
+FLAME zero weights: ['model0: 0.0000', 'model1: 0.0000', 'model3_M: 0.0000', 'model4: 0.0000', 'model11: 0.0000', 'model12: 0.0000', 'model13: 0.0000', 'model15: 0.0000', 'model16: 0.0000']
+malicious weight selected %: 36.36
+server lr: 0.1
+(god) main_model accuracy % on all test data: 44.69
+
+Iteration 71:
+(mali) main_model accuracy % on all test data: 78.91
+training on the end nodes...
+FLAME non-zero weights: ['model2_M: 0.0909', 'model5: 0.0909', 'model6: 0.0909', 'model7: 0.0909', 'model8_M: 0.0909', 'model9_M: 0.0909', 'model10: 0.0909', 'model14: 0.0909', 'model17_M: 0.0909', 'model18: 0.0909', 'model19: 0.0909']
+FLAME zero weights: ['model0: 0.0000', 'model1: 0.0000', 'model3_M: 0.0000', 'model4: 0.0000', 'model11: 0.0000', 'model12: 0.0000', 'model13: 0.0000', 'model15: 0.0000', 'model16: 0.0000']
+malicious weight selected %: 36.36
+server lr: 0.1
+(god) main_model accuracy % on all test data: 45.03
+
+Iteration 72:
+(mali) main_model accuracy % on all test data: 79.00
+training on the end nodes...
+FLAME non-zero weights: ['model2_M: 0.0909', 'model5: 0.0909', 'model6: 0.0909', 'model7: 0.0909', 'model8_M: 0.0909', 'model9_M: 0.0909', 'model10: 0.0909', 'model14: 0.0909', 'model17_M: 0.0909', 'model18: 0.0909', 'model19: 0.0909']
+FLAME zero weights: ['model0: 0.0000', 'model1: 0.0000', 'model3_M: 0.0000', 'model4: 0.0000', 'model11: 0.0000', 'model12: 0.0000', 'model13: 0.0000', 'model15: 0.0000', 'model16: 0.0000']
+malicious weight selected %: 36.36
+server lr: 0.1
+(god) main_model accuracy % on all test data: 45.32
+
+Iteration 73:
+(mali) main_model accuracy % on all test data: 79.00
+training on the end nodes...
+FLAME non-zero weights: ['model2_M: 0.0909', 'model5: 0.0909', 'model6: 0.0909', 'model7: 0.0909', 'model8_M: 0.0909', 'model9_M: 0.0909', 'model10: 0.0909', 'model14: 0.0909', 'model17_M: 0.0909', 'model18: 0.0909', 'model19: 0.0909']
+FLAME zero weights: ['model0: 0.0000', 'model1: 0.0000', 'model3_M: 0.0000', 'model4: 0.0000', 'model11: 0.0000', 'model12: 0.0000', 'model13: 0.0000', 'model15: 0.0000', 'model16: 0.0000']
+malicious weight selected %: 36.36
+server lr: 0.1
+(god) main_model accuracy % on all test data: 45.51
+
+Iteration 74:
+(mali) main_model accuracy % on all test data: 79.03
+training on the end nodes...
