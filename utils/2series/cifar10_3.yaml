@@ -1,6 +1,6 @@
 ---
 if_series: True
-cuda_device: 4
+cuda_device: 3
 type: cifar10
 number_of_clients: 100
 select_precentage: 10

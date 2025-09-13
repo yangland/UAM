@@ -913,104 +913,266 @@ class Helper:
 
         return sample_dict_train
 
+    # def get_subsamples_indices(self, label_dict, number_of_clients, amount, num_classes, class_ids, NonIID, alpha):
+    #     sample_dict = dict()
+    #     batch_size = int(math.floor(amount / number_of_clients))
+
+    #     if NonIID == False:
+    #         for i in range(number_of_clients):  # create 100 number_of_clients
+    #             sample_name = "sample" + str(i)
+    #             sample_list = []
+    #             # IID distribution, each number class gets same samples
+    #             for j in range(num_classes):  # for each class
+    #                 label_name = str("label") + str(j)
+    #                 a = label_dict[label_name][i * batch_size:(i + 1) * batch_size]
+    #                 sample_list.extend(a)
+    #             sample_dict.update({sample_name: np.asarray(sample_list)})  # each sample 450, 100 samples
+    #     else:
+    #         image_nums = []
+    #         sample_dict = {}
+
+    #         # created the keys for sample_dict
+    #         for i in range(number_of_clients):
+    #             sample_name = "sample" + str(i)
+    #             sample_dict.update({sample_name: []})
+
+    #         if self.params.get("if_quantity_based_noniid") is None or self.params["if_quantity_based_noniid"] is False:
+    #             # distribution based label skew based of Dirichlet distribution
+    #             for label in class_ids:
+    #                 image_num = []
+    #                 sampled_probabilities = amount * np.random.dirichlet(
+    #                     np.array(number_of_clients * [alpha]))
+    #                 class_label_len = len(label_dict[str("label") + str(label)])
+
+    #                 for sample in range(number_of_clients):
+    #                     # at least 1 sample image per client
+    #                     no_imgs = math.ceil(sampled_probabilities[sample])
+    #                     label_name = str("label") + str(label)
+
+    #                     cut_off = min(class_label_len, no_imgs)
+    #                     sampled_list = label_dict[label_name][:cut_off]
+    #                     label_dict[label_name] = label_dict[label_name][cut_off:]
+    #                     image_num.append(len(sampled_list))
+    #                     dumb2 = sampled_list
+
+    #                     class_label_len = class_label_len - len(sampled_list)
+    #                     sample_name = "sample" + str(sample)
+    #                     image_nums.append(image_num)
+    #                     sample_dict[sample_name] = sample_dict[sample_name] + dumb2
+    #         else:
+    #             # quantity-based label skew, limit the class number (theta) for client
+    #             theta = self.params['quantity_based_theta']
+    #             sets_per_client = math.floor(self.num_classes * theta)
+    #             sets_per_class = {}
+
+    #             for label, indices in label_dict.items():
+    #                 sets_per_class[label] = math.floor(len(indices) / (number_of_clients * theta)) - 1
+
+    #             for sample in range(number_of_clients):
+    #                 if len(class_ids) > sets_per_client:
+    #                     selected_class_ids = random.sample(class_ids, sets_per_client)
+    #                 else:
+    #                     selected_class_ids = class_ids
+
+    #                 for label in selected_class_ids:
+    #                     label_name = str("label") + str(label)
+    #                     class_label_len = len(label_dict[label_name])
+    #                     cut_off = min(class_label_len, sets_per_class[label_name])
+    #                     sampled_list = label_dict[label_name][:cut_off]
+    #                     label_dict[label_name] = label_dict[label_name][cut_off:]
+
+    #                     sample_name = "sample" + str(sample)
+    #                     sample_dict[sample_name] = sample_dict[sample_name] + sampled_list
+
+    #                     if len(label_dict[label_name]) < sets_per_class[label_name] * 0.1:
+    #                         class_ids.remove(label)
+
+    #     return sample_dict
+
+    # def create_subsamples(self, sample_dict, x_data, y_data, x_name, y_name):
+    #     x_data_dict = dict()
+    #     y_data_dict = dict()
+
+    #     for i in range(len(sample_dict)):  ### len(sample_dict)= number of clients
+    #         xname = x_name + str(i)
+    #         yname = y_name + str(i)
+    #         sample_name = "sample" + str(i)
+
+    #         # use the global index to reconnect x and y
+    #         sample_dict[sample_name].sort()
+    #         x_info = [x_data[j] for j in sample_dict[sample_name]]
+    #         if x_info == []:
+    #             print("i", i)
+    #         x_info = torch.stack(x_info)
+    #         x_info.to(self.cuda_device)
+    #         x_data_dict.update({xname: x_info})
+    #         y_info = torch.as_tensor([y_data[j] for j in sample_dict[sample_name]])
+    #         y_info.to(self.cuda_device)
+    #         y_data_dict.update({yname: y_info})
+
+    #     return (x_data_dict, y_data_dict)
+
+
     def get_subsamples_indices(self, label_dict, number_of_clients, amount, num_classes, class_ids, NonIID, alpha):
-        sample_dict = dict()
-        batch_size = int(math.floor(amount / number_of_clients))
+        """
+        Returns {'sample{i}': [global_indices, ...]}.
 
-        if NonIID == False:
-            for i in range(number_of_clients):  # create 100 number_of_clients
-                sample_name = "sample" + str(i)
-                sample_list = []
-                # IID distribution, each number class gets same samples
-                for j in range(num_classes):  # for each class
-                    label_name = str("label") + str(j)
-                    a = label_dict[label_name][i * batch_size:(i + 1) * batch_size]
-                    sample_list.extend(a)
-                sample_dict.update({sample_name: np.asarray(sample_list)})  # each sample 450, 100 samples
+        - If 'amount' is None/<=0/'NA'/'none' -> use full dataset.
+        - NonIID=True: for each class c, sample Dirichlet([alpha]*C) -> probs, then Multinomial(class_quota, probs).
+        - Totals exactly match the chosen target (full dataset or 'amount').
+        - Enforces min-1 sample per client by borrowing from largest holder if needed.
+        """
+        import numpy as np
+
+        # ----- helpers -----
+        def _parse_amount(amnt):
+            # accept None, 0, negative, 'NA', 'none', 'full' to mean "use full dataset"
+            if amnt is None:
+                return None
+            if isinstance(amnt, (np.integer, int)) and amnt > 0:
+                return int(amnt)
+            if isinstance(amnt, str) and amnt.strip().lower() in {"na", "none", "full", "all"}:
+                return None
+            try:
+                v = int(amnt)
+                return v if v > 0 else None
+            except Exception:
+                return None
+
+        rng = np.random.default_rng(self.params.get("random_seed", None))
+
+        # available per class and total
+        avail_per_class = {c: len(label_dict[f"label{c}"]) for c in class_ids}
+        total_avail = sum(avail_per_class.values())
+
+        target_total = _parse_amount(amount)
+        if target_total is None or target_total >= total_avail:
+            target_total = total_avail  # full dataset
+
+        # ---- per-class quotas that sum to target_total ----
+        # base proportional allocation (largest remainder), capped by availability
+        if target_total == total_avail:
+            per_class_quota = {c: avail_per_class[c] for c in class_ids}
         else:
-            image_nums = []
-            sample_dict = {}
+            # proportional floor
+            props = {c: (avail_per_class[c] / total_avail) * target_total for c in class_ids}
+            floors = {c: int(np.floor(props[c])) for c in class_ids}
+            per_class_quota = floors.copy()
+            remainder = target_total - sum(floors.values())
+            # fractional parts for largest remainder
+            fracs = sorted(class_ids, key=lambda c: (props[c] - floors[c]), reverse=True)
+            for c in fracs:
+                if remainder == 0:
+                    break
+                if per_class_quota[c] < avail_per_class[c]:
+                    per_class_quota[c] += 1
+                    remainder -= 1
+            # if still remainder (due to caps), spread to any class with spare
+            if remainder > 0:
+                for c in class_ids:
+                    if remainder == 0:
+                        break
+                    spare = avail_per_class[c] - per_class_quota[c]
+                    if spare > 0:
+                        take = min(spare, remainder)
+                        per_class_quota[c] += take
+                        remainder -= take
 
-            # created the keys for sample_dict
-            for i in range(number_of_clients):
-                sample_name = "sample" + str(i)
-                sample_dict.update({sample_name: []})
+        # build output dict
+        sample_dict = {f"sample{i}": [] for i in range(number_of_clients)}
 
-            if self.params.get("if_quantity_based_noniid") is None or self.params["if_quantity_based_noniid"] is False:
-                # distribution based label skew based of Dirichlet distribution
-                for label in class_ids:
-                    image_num = []
-                    sampled_probabilities = amount * np.random.dirichlet(
-                        np.array(number_of_clients * [alpha]))
-                    class_label_len = len(label_dict[str("label") + str(label)])
+        # concrete indices per class (copy so label_dict remains untouched)
+        class_indices = {c: list(label_dict[f"label{c}"]) for c in class_ids}
+        for c in class_ids:
+            rng.shuffle(class_indices[c])
 
-                    for sample in range(number_of_clients):
-                        # at least 1 sample image per client
-                        no_imgs = math.ceil(sampled_probabilities[sample])
-                        label_name = str("label") + str(label)
-
-                        cut_off = min(class_label_len, no_imgs)
-                        sampled_list = label_dict[label_name][:cut_off]
-                        label_dict[label_name] = label_dict[label_name][cut_off:]
-                        image_num.append(len(sampled_list))
-                        dumb2 = sampled_list
-
-                        class_label_len = class_label_len - len(sampled_list)
-                        sample_name = "sample" + str(sample)
-                        image_nums.append(image_num)
-                        sample_dict[sample_name] = sample_dict[sample_name] + dumb2
+        # ---- distribute each class quota across clients ----
+        for c in class_ids:
+            quota_c = int(per_class_quota[c])
+            if quota_c <= 0:
+                continue
+            idxs = class_indices[c][:quota_c]  # exact count
+            # NonIID vs IID client counts for this class
+            if not NonIID:
+                q, r = divmod(quota_c, number_of_clients)
+                counts = np.full(number_of_clients, q, dtype=int)
+                counts[:r] += 1
             else:
-                # quantity-based label skew, limit the class number (theta) for client
-                theta = self.params['quantity_based_theta']
-                sets_per_client = math.floor(self.num_classes * theta)
-                sets_per_class = {}
+                probs = rng.dirichlet([alpha] * number_of_clients)
+                counts = rng.multinomial(quota_c, probs)
 
-                for label, indices in label_dict.items():
-                    sets_per_class[label] = math.floor(len(indices) / (number_of_clients * theta)) - 1
+            # assign indices to clients according to counts
+            p = 0
+            for i in range(number_of_clients):
+                k = int(counts[i])
+                if k > 0:
+                    take = idxs[p:p + k]
+                    p += k
+                    sample_dict[f"sample{i}"].extend(take)
 
-                for sample in range(number_of_clients):
-                    if len(class_ids) > sets_per_client:
-                        selected_class_ids = random.sample(class_ids, sets_per_client)
-                    else:
-                        selected_class_ids = class_ids
+        # ---- enforce min-1 per client (borrow from largest holder) ----
+        empties = [i for i in range(number_of_clients) if len(sample_dict[f"sample{i}"]) == 0]
+        if empties:
+            if target_total < number_of_clients:
+                raise ValueError("Cannot enforce min-1: target_total < number_of_clients.")
+            for i in empties:
+                donor = max(range(number_of_clients), key=lambda j: len(sample_dict[f"sample{j}"]))
+                if len(sample_dict[f"sample{donor}"]) <= 1:
+                    raise ValueError("No donor with >1 samples to borrow from.")
+                sample_dict[f"sample{i}"].append(sample_dict[f"sample{donor}"].pop())
 
-                    for label in selected_class_ids:
-                        label_name = str("label") + str(label)
-                        class_label_len = len(label_dict[label_name])
-                        cut_off = min(class_label_len, sets_per_class[label_name])
-                        sampled_list = label_dict[label_name][:cut_off]
-                        label_dict[label_name] = label_dict[label_name][cut_off:]
+        # tidy
+        for i in range(number_of_clients):
+            sample_dict[f"sample{i}"].sort()
 
-                        sample_name = "sample" + str(sample)
-                        sample_dict[sample_name] = sample_dict[sample_name] + sampled_list
-
-                        if len(label_dict[label_name]) < sets_per_class[label_name] * 0.1:
-                            class_ids.remove(label)
+        # consistency check (optional)
+        assigned_total = sum(len(v) for v in sample_dict.values())
+        if assigned_total != target_total:
+            raise RuntimeError(f"Assigned total {assigned_total} != target_total {target_total}")
 
         return sample_dict
 
+
     def create_subsamples(self, sample_dict, x_data, y_data, x_name, y_name):
-        x_data_dict = dict()
-        y_data_dict = dict()
+        """
+        Build per-client tensors from global x/y and assigned indices.
+        Guarantees at least 1 sample per client by borrowing one index
+        from the client holding the largest shard (with >1 samples).
+        """
+        x_data_dict, y_data_dict = {}, {}
+        num_clients = len(sample_dict)
 
-        for i in range(len(sample_dict)):  ### len(sample_dict)= number of clients
-            xname = x_name + str(i)
-            yname = y_name + str(i)
-            sample_name = "sample" + str(i)
+        for i in range(num_clients):
+            xname = f"{x_name}{i}"
+            yname = f"{y_name}{i}"
+            sample_name = f"sample{i}"
 
-            # use the global index to reconnect x and y
-            sample_dict[sample_name].sort()
-            x_info = [x_data[j] for j in sample_dict[sample_name]]
-            if x_info == []:
-                print("i", i)
-            x_info = torch.stack(x_info)
-            x_info.to(self.cuda_device)
-            x_data_dict.update({xname: x_info})
-            y_info = torch.as_tensor([y_data[j] for j in sample_dict[sample_name]])
-            y_info.to(self.cuda_device)
-            y_data_dict.update({yname: y_info})
+            # Ensure indices exist and are sorted
+            indices = sample_dict.get(sample_name, [])
+            indices.sort()
 
-        return (x_data_dict, y_data_dict)
+            # --- enforce min-1 per client (borrow 1 if empty) ---
+            if not indices:
+                donor = max(range(num_clients), key=lambda j: len(sample_dict.get(f"sample{j}", [])))
+                donor_list = sample_dict.get(f"sample{donor}", [])
+                if len(donor_list) <= 1:
+                    raise ValueError(
+                        "Cannot enforce min-1 per client; no donor with >1 samples. "
+                        "Increase dirichlet_alpha, train_amount, or reduce number_of_clients."
+                    )
+                indices.append(donor_list.pop())
+                indices.sort()
+                sample_dict[sample_name] = indices  # keep dict consistent
+            # ----------------------------------------------------
+
+            x_info = torch.stack([x_data[j] for j in indices], dim=0).to(self.cuda_device)
+            y_info = torch.as_tensor([y_data[j] for j in indices], device=self.cuda_device)
+
+            x_data_dict[xname] = x_info
+            y_data_dict[yname] = y_info
+
+        return x_data_dict, y_data_dict
+
 
     # Training and Validation Functions
     @staticmethod
