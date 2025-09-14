@@ -1,15 +1,16 @@
 ---
 if_series: True
-cuda_device: 4
+cuda_device: 1
 type: cifar10
 number_of_clients: 100
 select_precentage: 10
-learning_rate: 0.01 # 0.01, 0.05
+selection_mode: fixed_pct
+learning_rate: 0.05 # 0.01, 0.05
 iterations: 300 #10, 24
 early_stopping: False
 early_stopping_tolerance: 3
 early_stopping_min_delta: 0.0
-numEpoch: 10 # 10
+numEpoch: 2 # 10
 batch_size: 32
 momentum: 0.9
 server_lr_fix: True
@@ -18,9 +19,9 @@ server_lr_decay: 'NA'
 server_lr_floor: 'NA'
 if_noniid_s: [True] # [False, True]
 # dirichlet_alpha
-dirichlet_alpha_s: [0.1, 1.0] # [0.2, 1.0]
+dirichlet_alpha_s: [1.0] # [0.2, 1.0]
 num_classes: 10
-train_amount: 6000
+train_amount: 20000
 random_seed: 0
 nn_model:  Cifar10_18L
 class_names: ['plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
@@ -49,7 +50,7 @@ bulyan_m: 4
 
 # Malicious Clients
 # malicious_attack_s: [True]
-number_of_malicious_s: [25]
+number_of_malicious_s: [30]
 # untargeted1 y = existed y label + 1, 1->2, ... , 9 -> 1
 # untargeted2 y = existed y label -> random label of all class with same probability
 # malicious_modes: 'untargeted2' # 'untargeted1', 'untargeted2', 'label_flipping', 'backdoor'

@@ -115,10 +115,14 @@ def foolsgold_contra(historical_weights, reputation_dict):
 # https://github.com/SanaAwan5/CONTRA2020/
 def foolsgold_new(historical_weights, reputation_dict):
     n_clients = len(historical_weights)
-    # print("n_clients", n_clients)
+    if n_clients == 0:
+        return {}, reputation_dict
+    if n_clients == 1:
+        name = next(iter(historical_weights.keys()))
+        return {name: 1.0}, reputation_dict
+
     grads = []
     clients_names = []
-
     for name, weight in historical_weights.items():
         grads.append(torch.flatten(weight).cpu().detach().numpy())
         clients_names.append(name)
@@ -137,18 +141,20 @@ def foolsgold_new(historical_weights, reputation_dict):
                 cs[i][j] = cs[i][j] * maxcs[i] / (maxcs[j] + epsilon)
     # k = 5 is not showing in the original Foolsgold
     k = 5
-    losses =[]
-    epsilon = 1E-5
+    k = max(1, min(k, n_clients))
+    losses = np.zeros(n_clients, dtype=float)  # ensure shape is valid
+
     for i in range(n_clients):
-        temp=0
-        # k largest cs[i] in the good_idx
+        # k largest indices in row i
         good_idx = np.argpartition(cs[i], (n_clients - k))[(n_clients - k):n_clients]
-        for j in range(k):
-            good_idx_data = cs[i][good_idx[j]]
+        kk = min(k, len(good_idx))
+        if kk == 0:
+            avg_cs.append(0.0)
+            continue
+        temp = 0.0
+        for j in range(kk):
             temp += cs[i][good_idx[j]]
-        # average of the k largest cs[i][j] in cs[i]
-        temp = temp / k
-        avg_cs.append(temp)
+        avg_cs.append(temp / kk)
 
     avg_cs = np.array(avg_cs)
     maxcs = 1 - (np.max(cs, axis = 1))
@@ -156,7 +162,7 @@ def foolsgold_new(historical_weights, reputation_dict):
 
     cs_sorted = np.sort(cs[:,-k:], axis = 0)
     cs_sorted_mean = (np.mean(cs_sorted, axis = 1))
-    bad_idx_loss = np.argpartition(losses,-k)[-k:]
+    bad_idx_loss = np.argsort(losses)[-k:]
     for i in range(n_clients):
         if avg_cs[i] >=0.9 and i in bad_idx_loss:
             wv[i] = epsilon

@@ -1,10 +1,10 @@
 ---
 if_series: True
-cuda_device: 3
+cuda_device: 4
 type: cifar10
 number_of_clients: 12
 learning_rate: 0.01 # 0.01, 0.05
-iterations: 200 #10, 24
+iterations: 50 #10, 24
 early_stopping: False
 early_stopping_tolerance: 3
 early_stopping_min_delta: 0.0
@@ -53,7 +53,7 @@ number_of_malicious_s: [3, 0]
 # untargeted2 y = existed y label -> random label of all class with same probability
 # malicious_modes: 'untargeted2' # 'untargeted1', 'untargeted2', 'label_flipping', 'backdoor'
 # attack_method: 'RL'
-attack_method_s: ['None', 'little', 'explicit boosting', 'min-max', 'min-sum', 'RL']
+attack_method_s: ['None', 'RL', 'little', 'explicit boosting', 'min-max', 'min-sum', 'RL']
 
 # RL based Malicious Attack
 rl_based_attack: True

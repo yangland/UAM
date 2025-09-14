@@ -41,9 +41,19 @@ from aggr.krum import krum
 from aggr.foolsgold import foolsgold, foolsgold_new, pendulum, foolsgold_contra
 from aggr.coordinate_wise_median import coordinate_wise_median, trimmed_mean
 from aggr.mani_byzan import our_attack_dist, our_attack_score
-from aggr.flame import flame_aggr, get_model_merged, get_model_update
+from aggr.flame import flame_aggr, get_model_merged, get_model_update, fedavg
 
-logger = logging.getLogger("logger")
+# helper.py (top of file)
+import logging, sys
+
+logger = logging.getLogger("uam")
+logger.propagate = False  # don't bubble to root (prevents double printing)
+if not logger.handlers:   # guard so we don't add multiple handlers
+    h = logging.StreamHandler(sys.stdout)
+    h.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(h)
+    logger.setLevel(logging.INFO)
+
 
 
 class Helper:
@@ -103,6 +113,43 @@ class Helper:
         self.rounds_before_restart = self.params['rounds_before_restart']
         self.rl_mode = self.params['rl_mode']
         self.pre_aggregation_method = self.params['pre_aggregation_method']
+        self.num_clients = int(self.params["number_of_clients"])
+        self._logged_once = set()
+        
+        # Default to 100% if not present
+        sp = self.params.get("select_precentage", 100)  # supports 10 or 0.10
+        sp = float(sp)
+        frac = sp / 100.0 if sp > 1.0 else sp
+        self.k_per_round = max(1, min(self.num_clients, int(round(self.num_clients * frac))))
+
+        # Two modes only
+        self.selection_mode = str(self.params.get("selection_mode", "random")).lower()
+        if self.selection_mode not in ("random", "fixed_pct"):
+            self.selection_mode = "random"
+
+        # Malicious pool (assumes you already create it; else fall back to params)
+        if hasattr(self, "malicious_ids"):
+            self.malicious_ids = set(self.malicious_ids)
+        else:
+            # fallback from params if needed
+            nm = 0
+            if "number_of_malicious" in self.params:
+                nm = int(self.params["number_of_malicious"])
+            elif "number_of_malicious_s" in self.params and isinstance(self.params["number_of_malicious_s"], list):
+                nm = int(self.params["number_of_malicious_s"][0])
+            nm = max(0, min(self.num_clients, nm))
+            self.malicious_ids = set(np.random.default_rng(self.params.get("random_seed", None))
+                                    .choice(self.num_clients, size=nm, replace=False).tolist())
+
+        self.malicious_ids = set(int(x) for x in self.malicious_ids)
+        self.malicious_names = sorted(self.malicious_ids)
+
+        # Fixed percentage for malicious share (used only when selection_mode == "fixed_pct")
+        self.malicious_selection_ratio = float(self.params.get("malicious_selection_ratio", 0.3))
+
+        # RNG
+        self._rng = np.random.default_rng(self.params.get("random_seed", None))
+
 
         if self.params.get('select_precentage') is None or not self.params['select_precentage']:
             self.clients_selection = None
@@ -123,9 +170,11 @@ class Helper:
             os.makedirs(self.folder_path)
         except FileExistsError:
             logger.info('Folder already exists')
-        logger.addHandler(logging.FileHandler(filename=f'{self.folder_path}/log_{self.name}_{current_time}.txt'))
-        logger.addHandler(logging.StreamHandler())
-        logger.setLevel(logging.DEBUG)
+            
+        logfile = f'{self.folder_path}/log_{self.name}_{current_time}.txt'
+        if not any(isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", "") == os.path.abspath(logfile)
+                for h in logger.handlers):
+            logger.addHandler(logging.FileHandler(filename=logfile))
 
         if not self.params.get('environment_name', False):
             self.params['environment_name'] = self.name
@@ -283,8 +332,13 @@ class Helper:
 
         logger.info("start training iterations:")
 
+        dataset = self.params.get('type', getattr(self, 'environment_name', 'unknown'))
+        attack  = self.params.get('attack_method', getattr(self, 'attack_method', 'None'))
+        agg     = self.aggregation_method
+        
         for i in range(self.params['iterations']):
-            logger.info("\nIteration {}:".format(int(i + 1)))
+            self.current_iter = i + 1
+            logger.info(f"\n Iteration {self.current_iter}: dataset={dataset} | attack={attack} | agg={agg}")
             mali_loss_record, mali_accuracy_record, mali_asr_record, model_output_na = self.recording_validation(i,
                                                                                                                  "mali")
             if model_output_na:
@@ -410,46 +464,60 @@ class Helper:
             attack_magnitude = 1.0
             goal_conc = 0
 
-        select_model_dict, idx_clients = client_random_selection(self.model_dict, self.number_of_clients, self.clients_selection)
+        # Minimal, 2-mode selection
+        idx_clients = self.sample_clients_for_round()
+        self.last_selected_client_ids = [int(i) for i in idx_clients]
 
-        if bool(set(idx_clients) & set(self.malicious_names)):
+        # build the subset from the normalized ids
+        self.subset_dict = {f"model{i}": self.model_dict[f"model{i}"] for i in self.last_selected_client_ids}
+
+        # did we sample any malicious clients?
+        self.iteration_mali = any(i in self.malicious_names for i in self.last_selected_client_ids)
+        if self.iteration_mali:
             print("This iteration has malicious client(s)")
-            self.iteration_mali=True
-        else:
-            self.iteration_mali=False
 
         logger.info("training on the end nodes...")
-        grads_regular = self.start_train_end_node_process(self.params['malicious_attack'],
-                                                          self.malicious_names,
-                                                          self.sample_nodes, iteration + 1,
-                                                          self.params['plot_individual'],
-                                                          self.params['plot_global'],
-                                                          self.params['weights_layer'],
-                                                          self.params['distance_matrix'],
-                                                          self.rl_mode, idx_clients)
-        if len(self.malicious_names) != 0:
+        grads_regular = self.start_train_end_node_process(
+            self.params['malicious_attack'],
+            self.malicious_names,
+            self.sample_nodes, iteration + 1,
+            self.params['plot_individual'],
+            self.params['plot_global'],
+            self.params['weights_layer'],
+            self.params['distance_matrix'],
+            self.rl_mode,
+            self.last_selected_client_ids,  # pass normalized ids
+        )
+
+        # Only attack if (a) there are malicious clients in the config AND (b) some were sampled this round
+        if len(self.malicious_names) != 0 and self.iteration_mali:
             self.attacker_modify_trained_weights(grads_regular, attack_magnitude, goal_conc, self.rl_mode)
+
         return None
+
 
     def attacker_modify_trained_weights(self, grads_regular, attack_magnitude, goal_conc, rl_mode):
         with torch.no_grad():
             if self.attack_method == 'explicit boosting':
                 K = 5 # 10
                 # boost towards the direction of malicious training
-                for model_name in self.model_dict.keys():
-                    if int(model_name[5:]) in self.malicious_names:
-                        for layer_name, param in self.main_model.state_dict().items():
-                            get_layer_weight(self.model_dict[model_name], layer_name).data = \
-                                get_layer_weight(self.model_dict_before[model_name], layer_name).clone() \
-                                + K * \
-                                get_layer_weight(grads_regular[model_name], layer_name).clone()
+                selected_keys = set(self.subset_dict.keys())   # e.g., {"model3","model7",...}
+                mal_keys = {f"model{i}" for i in self.malicious_names}
+                target_keys = selected_keys & mal_keys
+                
+                for model_name in target_keys:
+                    for layer_name, param in self.main_model.state_dict().items():
+                        get_layer_weight(self.model_dict[model_name], layer_name).data = \
+                            get_layer_weight(self.model_dict_before[model_name], layer_name).clone() \
+                            + K * get_layer_weight(grads_regular[model_name], layer_name).clone()
+                                      
             elif self.attack_method == 'little':
                 # 1. average the malicious clients as mean
                 # 2. Z_max = 0.08, based on n = 20, m = 5
                 # 3. minus Z_max * std from mean
                 Z_max = 0.08
 
-                malicious_models = {key: self.model_dict["model" + str(key)] for key in self.malicious_names}
+                malicious_models = {f"model{int(cid)}": self.model_dict[f"model{int(cid)}"] for cid in self.malicious_names}
                 mean = self.get_aggregated_weights(malicious_models, 'fedavg')
                 std_dict = {}
 
@@ -473,7 +541,7 @@ class Helper:
                 logger.info("deliver little attack")
             elif self.attack_method in ['min-max', 'min-sum']:
                 n_attacker = 5
-                malicious_models = {key: self.model_dict["model" + str(key)] for key in self.malicious_names}
+                malicious_models = {f"model{int(cid)}": self.model_dict[f"model{int(cid)}"] for cid in self.malicious_names}
                 mean = self.get_aggregated_weights(malicious_models, 'fedavg')
                 mal_updates = {}
 
@@ -513,28 +581,37 @@ class Helper:
                             pass
                 elif rl_mode == "reverse_grad":
                     if goal_conc is None:
-                        for model_name in self.subset_dict.keys():
-                            if int(model_name[5:]) in self.malicious_names:
-                                for layer_name, param in self.main_model.state_dict().items():
-                                    if self.params.get('Median_att') is None or not self.params['Median_att']:
-                                        get_layer_weight(self.model_dict[model_name], layer_name).data = \
-                                            get_layer_weight(self.model_dict_before[model_name], layer_name).clone() \
-                                            - attack_magnitude * \
-                                            get_layer_weight(grads_regular[model_name], layer_name).clone()
+                        # operate only on models that were BOTH selected this round and are malicious
+                        selected_keys = set(self.subset_dict.keys())                          # e.g., {"model3","model7",...}
+                        mal_keys      = {f"model{int(cid)}" for cid in self.malicious_names}  # {"model6","model7",...}
+                        target_keys   = selected_keys & mal_keys                              # selected ∩ malicious
+
+                        for model_name in target_keys:
+                            for layer_name, _ in self.main_model.state_dict().items():
+                                if self.params.get('Median_att') is None or not self.params['Median_att']:
+                                    # standard reverse-grad step on selected-malicious only
+                                    get_layer_weight(self.model_dict[model_name], layer_name).data = (
+                                        get_layer_weight(self.model_dict_before[model_name], layer_name).clone()
+                                        - attack_magnitude * get_layer_weight(grads_regular[model_name], layer_name).clone()
+                                    )
+                                else:
+                                    # "median attack" (your code uses fedavg as the aggregator)
+                                    # black-box: use selected-malicious; white-box: use selected-honest
+                                    if self.params.get('White_box') is None or not self.params['White_box']:
+                                        base_pool = target_keys                                 # selected malicious in this round
                                     else:
-                                        # median attack - beta * median( vi )
-                                        # blackbox, only the malicious clients
-                                        if self.params.get('White_box') is None or not self.params['White_box']:
-                                            client_list = self.malicious_names
-                                        else:
-                                            client_list = self.honest_names
-                                        client_names = ["model" + str(s) for s in client_list]
-                                        model_list = {key: self.model_dict[key] for key in client_names}
+                                        base_pool = selected_keys - target_keys                  # selected honest in this round
 
-                                        model_median = self.get_aggregated_weights(model_list, 'fedavg')
+                                    if not base_pool:
+                                        # nothing to aggregate from this round; skip safely
+                                        continue
 
-                                        get_layer_weight(self.model_dict[model_name], layer_name).data = \
-                                            - model_median[layer_name].clone() * attack_magnitude
+                                    model_list = {key: self.model_dict[key] for key in base_pool}
+                                    model_median = self.get_aggregated_weights(model_list, 'fedavg')
+
+                                    get_layer_weight(self.model_dict[model_name], layer_name).data = (
+                                        - model_median[layer_name].clone() * attack_magnitude
+                                    )
 
                     else:
                         for layer_name, param in self.main_model.state_dict().items():
@@ -1466,48 +1543,338 @@ class Helper:
 
         return per_agg_model_dict
 
+    # def get_aggregated_weights(self, model_dict, aggregation_method):
+    #     name_of_models = list(model_dict.keys())
+    #     number_of_clients = len(model_dict)
+    #     weight_accumulator = {}
+    #     malicious_weight_sel = None
+
+    #     # print("name_of_models[0]", name_of_models[0])
+    #     for name, param in model_dict[name_of_models[0]].state_dict().items():
+    #         struct = torch.zeros(size=param.size(), device=self.cuda_device)
+    #         weight_accumulator[name] = struct
+
+    #     # FedAvg
+    #     if aggregation_method == 'fedavg':
+    #         # print('agg method is fedavg')
+    #         with torch.no_grad():
+    #             for i in range(number_of_clients):
+    #                 for key, value in weight_accumulator.items():
+    #                     weight_accumulator[key] += get_layer_weight(model_dict[name_of_models[i]],
+    #                                                                 key).data.clone()
+
+    #             for key, value in weight_accumulator.items():
+    #                 weight_accumulator[key] = value / number_of_clients
+    #     elif aggregation_method == 'flame':
+    #         # --- Build client updates relative to the previous server model ---
+    #         with torch.no_grad():
+    #             # You likely already have a handle to the server model.
+    #             # If its name differs, replace `self.server_model` accordingly.
+    #             server_sd = self.main_model.state_dict()
+
+    #             # Build client_updates_dict: { "modelX": delta_dict }
+    #             client_updates_dict = {}
+    #             for cid, client_model in model_dict.items():
+    #                 # client_model is an nn.Module in your codebase
+    #                 client_sd = client_model.state_dict()
+    #                 client_updates_dict[cid] = get_model_update(client_sd, server_sd)
+
+    #             # FLAME hyperparams (safely fallback if missing)
+    #             flame_noise = self.params.get('flame_noise', 1e-3)
+    #             exp_dir     = self.params.get('exp_dir', "")
+    #             cur_iter    = getattr(self, "current_iter", 0)
+
+    #             # Run FLAME: returns (server_grad_delta, client_weights)
+    #             server_grad, client_weights = flame_aggr(
+    #                 server_model_state_dict=server_sd,
+    #                 client_updates_dict=client_updates_dict,
+    #                 noise=flame_noise,
+    #                 exp_dir=exp_dir,
+    #                 iter=cur_iter
+    #             )
+
+    #             # Merge delta into absolute new server state (absolute weights)
+    #             new_server_sd = get_model_merged(server_grad, server_sd, assume_delta=True)
+
+    #             # --- Logging in your house style ---
+    #             malicious_weight_sel = self.malicious_weight_percentage(client_weights, self.malicious_names)
+    #             ordered_client_w_values = self.ordered_client_weight_values(client_weights)
+    #             self.weights_csv_logger.append_csv(ordered_client_w_values + [malicious_weight_sel])
+
+    #             logger_line_nonzero = []
+    #             logger_line_zero    = []
+    #             for name, w in client_weights.items():
+    #                 tag = f"{name}_M" if (int(str(name)[5:]) in self.malicious_names) else name
+    #                 pair = f"{tag}: {w:.4f}"
+    #                 if w != 0:
+    #                     logger_line_nonzero.append(pair)
+    #                 else:
+    #                     logger_line_zero.append(pair)
+
+    #             logger.info(f"FLAME non-zero weights: {logger_line_nonzero}")
+    #             logger.info(f"FLAME zero weights: {logger_line_zero}")
+
+    #             # Convert state_dict to your expected return format (absolute)
+    #             weight_accumulator = {}
+    #             for key, param in model_dict[next(iter(model_dict))].state_dict().items():
+    #                 # ensure same device/dtype as your pipeline expects
+    #                 weight_accumulator[key] = new_server_sd[key].to(self.cuda_device).detach().clone()
+
+    #     elif aggregation_method == 'geom_median':
+    #         with torch.no_grad():
+    #             model_sample_weight_dict = self.sampling_weight_layer(self.model_dict, self.sampling_layer)
+    #             geo_med, client_weights = geometric_median(model_sample_weight_dict, number_of_clients,
+    #                                                        method='weiszfeld', options={})
+    #             malicious_weight_sel = self.malicious_weight_percentage(client_weights, self.malicious_names)
+    #             ordered_client_w_values = self.ordered_client_weight_values(client_weights)
+    #             self.weights_csv_logger.append_csv(ordered_client_w_values + [malicious_weight_sel])
+
+    #             logger_line = []
+
+    #             for i in self.malicious_sample:
+    #                 key = "model" + str(i) + "_M"
+    #                 pair = "{}: {:.1f}".format(key, client_weights["model" + str(i)])
+    #                 logger_line.append(pair)
+
+    #             for i in self.honest_sample:
+    #                 key = "model" + str(i)
+    #                 pair = "{}: {:.1f}".format(key, client_weights[key])
+    #                 logger_line.append(pair)
+
+    #             logger.info(f"client_weights in aggr: {logger_line}")
+    #         weight_accumulator = self.weighted_average(model_dict, client_weights)
+    #     elif aggregation_method == 'single-krum':
+    #         weight_accumulator = self.krum_get_weight_accumulator(model_dict, krum_m=1)
+    #     elif aggregation_method == 'multi-krum':
+    #         weight_accumulator = self.krum_get_weight_accumulator(model_dict, krum_m=self.params['krum_m'])
+    #     elif aggregation_method == 'foolsgold':
+    #         with torch.no_grad():
+    #             model_sample_weight_dict = self.sampling_weight_layer(self.model_dict, self.sampling_layer)
+
+    #             for name, weight in model_sample_weight_dict.items():
+    #                 if name in self.memory_dict.keys():
+    #                     self.memory_dict[name].append(weight)
+    #                     if len(self.memory_dict[name]) == self.history_len + 1:
+    #                         # keep the history length not increasing
+    #                         self.memory_dict[name].pop(0)
+    #                 else:
+    #                     self.memory_dict[name] = [weight]
+
+    #             historical_weights = {}
+    #             for name, weights in self.memory_dict.items():
+    #                 for w in weights:
+    #                     if name in historical_weights.keys():
+    #                         historical_weights[name] += w
+    #                     else:
+    #                         historical_weights[name] = w
+
+    #             client_weights = foolsgold(historical_weights)
+    #             malicious_weight_sel = self.malicious_weight_percentage(client_weights, self.malicious_names)
+    #             ordered_client_w_values = self.ordered_client_weight_values(client_weights)
+    #             self.weights_csv_logger.append_csv(ordered_client_w_values + [malicious_weight_sel])
+
+    #             logger_line1 = []
+    #             logger_line2 = []
+    #             # logger unzero weights
+    #             for name, weight in client_weights.items():
+    #                 if weight != 0:
+    #                     if int(name[5:]) in self.malicious_sample:
+    #                         key = name + "_M"
+    #                         pair = "{}: {:.4f}".format(key, client_weights[name])
+    #                         logger_line1.append(pair)
+    #                     else:
+    #                         pair = "{}: {:.4f}".format(name, client_weights[name])
+    #                         logger_line1.append(pair)
+    #                 else:
+    #                     if int(name[5:]) in self.malicious_sample:
+    #                         key = name + "_M"
+    #                         pair = "{}: {:.4f}".format(key, client_weights[name])
+    #                         logger_line2.append(pair)
+    #                     else:
+    #                         pair = "{}: {:.4f}".format(name, client_weights[name])
+    #                         logger_line2.append(pair)
+
+    #             logger.info(f"foolsgold non zero weights: {logger_line1}")
+    #             logger.info(f"foolsgold zero weights: {logger_line2}")
+
+    #         weight_accumulator = self.weighted_average(model_dict, client_weights)
+    #     elif aggregation_method == 'contra':
+    #         logger.info(f"reputation_dict: {self.reputation_dict}")
+
+    #         # clients selection based on reputation
+    #         total = sum(self.reputation_dict.values(), 0.0)
+    #         if total == 0:
+    #             total = 1e-7
+    #         self.reputation_dict = {k: v / total for k, v in self.reputation_dict.items()}
+    #         sorted_keys = sorted(self.reputation_dict, key=self.reputation_dict.get, reverse=True)
+
+    #         for w in sorted_keys:
+    #             self.contra_sorted_dict[w] = (self.reputation_dict[w] * self.contra_f * (
+    #                     1 - self.contra_f)) + self.contra_f
+    #         key_list = list(self.contra_sorted_dict.keys())
+    #         value_list = list(self.contra_sorted_dict.values())
+    #         # in case value_list has negative values
+    #         if min(value_list) < 0:
+    #             value_list = [x - min(value_list) for x in value_list]
+    #         agent_name_keys = np.random.choice(key_list, self.params["contra_clients_selection"],
+    #                                            p=value_list / np.sum(value_list), replace=False)
+
+    #         logger_line = []
+    #         for name in agent_name_keys:
+    #             if int(name[5:]) in self.malicious_names:
+    #                 logger_line.append(name + "_M")
+    #             else:
+    #                 logger_line.append(name)
+    #         logger.info(f"contra selected clients: {logger_line}")
+
+    #         # Keep the history
+    #         model_sample_weight_dict = self.sampling_weight_layer(self.model_dict, self.sampling_layer)
+    #         with torch.no_grad():
+    #             for name, weight in model_sample_weight_dict.items():
+    #                 if name in self.memory_dict.keys():
+    #                     self.memory_dict[name].append(weight)
+    #                     if len(self.memory_dict[name]) == self.history_len + 1:
+    #                         # keep the history length not increasing
+    #                         self.memory_dict[name].pop(0)
+    #                 else:
+    #                     self.memory_dict[name] = [weight]
+
+    #             historical_weights = {}
+    #             for name, weights in self.memory_dict.items():
+    #                 for w in weights:
+    #                     if name in historical_weights.keys():
+    #                         historical_weights[name] += w
+    #                     else:
+    #                         historical_weights[name] = w
+
+    #         # use foolsgold
+    #         selected_model_dict = dict()
+
+    #         with torch.no_grad():
+    #             for name, weight in self.model_dict.items():
+    #                 if name in agent_name_keys:
+    #                     selected_model_dict[name] = weight
+    #             contra_sample_weight_dict = self.sampling_weight_layer(selected_model_dict, self.sampling_layer)
+
+    #         # update the reputation dict
+    #         client_weights, self.reputation_dict = foolsgold_new(contra_sample_weight_dict, self.reputation_dict)
+
+    #         # for not selected clients, their weights are 0
+    #         for name in model_dict.keys():
+    #             if name not in client_weights.keys():
+    #                 client_weights[name] = 0
+
+    #         malicious_weight_sel = self.malicious_weight_percentage(client_weights, self.malicious_names)
+    #         ordered_client_w_values = self.ordered_client_weight_values(client_weights)
+    #         self.weights_csv_logger.append_csv(ordered_client_w_values + [malicious_weight_sel])
+
+    #         # normalize the reputation
+    #         maxr = max(self.reputation_dict.values())
+    #         for k in self.reputation_dict:
+    #             self.reputation_dict[k] = self.reputation_dict[k] / maxr
+
+    #         weight_accumulator = self.weighted_average(model_dict, client_weights)
+    #     elif aggregation_method == 'coordinate_wise_median':
+    #         weight_accumulator = coordinate_wise_median(model_dict)
+    #     elif aggregation_method == 'trimmed_mean':
+    #         weight_accumulator = trimmed_mean(model_dict, self.params['trimmed_mean_m'])
+    #     elif aggregation_method == 'bulyan':
+    #         # Use the clients selected from multi-krum
+    #         with torch.no_grad():
+    #             model_sample_weight_dict = self.sampling_weight_layer(self.model_dict, self.sampling_layer)
+    #             muti_krum_m, krum_clients, client_weights = krum(model_sample_weight_dict, self.params['krum_f'],
+    #                                                              number_of_clients - 2 * self.params['bulyan_m'])
+    #             krum_selected_model_dict = {key: model_dict[key] for key in krum_clients}
+
+    #             # trimmed_mean
+    #             weight_accumulator = trimmed_mean(krum_selected_model_dict, 2 * self.params['bulyan_m'])
+    #     else:
+    #         warnings.warn("unknown aggregation method")
+
+    #     if malicious_weight_sel is not None:
+    #         logger.info(f"malicious weight selected %: {malicious_weight_sel * 100 :.2f}")
+
+    #     return weight_accumulator
+
+
     def get_aggregated_weights(self, model_dict, aggregation_method):
+        """
+        Aggregates client models into an absolute server state_dict (not deltas).
+        - Canonicalizes model names: "model3_M" -> "model3" (keys inside stay clean).
+        - Uses self.malicious_ids (or self.malicious_names if that's what you have) only as metadata.
+        - Keeps BN buffers out of FedAvg accumulator (server update already skips BN).
+        """
+        import numpy as np
+        # ---- helpers ----
+        def _norm_name(name: str) -> str:
+            # "model3_M" -> "model3"; "model3" -> "model3"
+            return name.split("_", 1)[0]
+
+        def _cid(name: str) -> int:
+            # assumes canonical "model<id>"
+            n = _norm_name(name)
+            return int(n[5:])
+
+        mal_id_set = set(getattr(self, "malicious_ids", getattr(self, "malicious_names", [])))
+
+        def _is_mal(name: str) -> bool:
+            try:
+                return _cid(name) in mal_id_set
+            except Exception:
+                return False
+
+        def _log_client_weights(title: str, client_weights: dict):
+            nz, z = [], []
+            for name, w in client_weights.items():
+                label = f"{_norm_name(name)}{'_M' if _is_mal(name) else ''}: {w:.4f}"
+                (nz if w != 0 else z).append(label)
+            logger.info(f"{title} non-zero weights: {nz}")
+            logger.info(f"{title} zero weights: {z}")
+
+        # ---- canonicalize input dict keys once ----
+        model_dict = { _norm_name(k): v for k, v in model_dict.items() }
         name_of_models = list(model_dict.keys())
         number_of_clients = len(model_dict)
+
         weight_accumulator = {}
         malicious_weight_sel = None
 
-        # print("name_of_models[0]", name_of_models[0])
-        for name, param in model_dict[name_of_models[0]].state_dict().items():
-            struct = torch.zeros(size=param.size(), device=self.cuda_device)
-            weight_accumulator[name] = struct
+        # initialize accumulator shape/device
+        first_sd = model_dict[name_of_models[0]].state_dict()
+        for name, param in first_sd.items():
+            weight_accumulator[name] = torch.zeros_like(param, device=self.cuda_device)
 
-        # FedAvg
+        # ---------------- FedAvg ----------------
         if aggregation_method == 'fedavg':
-            # print('agg method is fedavg')
             with torch.no_grad():
-                for i in range(number_of_clients):
-                    for key, value in weight_accumulator.items():
-                        weight_accumulator[key] += get_layer_weight(model_dict[name_of_models[i]],
-                                                                    key).data.clone()
+                server_sd = self.main_model.state_dict()
+                client_updates = {nm: model_dict[nm].state_dict() for nm in name_of_models}
 
-                for key, value in weight_accumulator.items():
-                    weight_accumulator[key] = value / number_of_clients
+                # use our helper; do NOT average BN buffers
+                avg_sd, _ = fedavg(server_sd, client_updates, average_bn_buffers=True)
+
+                # build the return dict as absolute weights (keep server BN buffers)
+                # use averaged tensors for ALL keys (fedavg() already handles BN/int counters)
+                weight_accumulator = {
+                    k: avg_sd[k].to(self.cuda_device).clone()
+                    for k in server_sd.keys()
+                }
+
+
+        # ---------------- FLAME ----------------
         elif aggregation_method == 'flame':
-            # --- Build client updates relative to the previous server model ---
             with torch.no_grad():
-                # You likely already have a handle to the server model.
-                # If its name differs, replace `self.server_model` accordingly.
                 server_sd = self.main_model.state_dict()
 
-                # Build client_updates_dict: { "modelX": delta_dict }
+                # deltas per client
                 client_updates_dict = {}
-                for cid, client_model in model_dict.items():
-                    # client_model is an nn.Module in your codebase
-                    client_sd = client_model.state_dict()
-                    client_updates_dict[cid] = get_model_update(client_sd, server_sd)
+                for nm in name_of_models:
+                    client_updates_dict[nm] = get_model_update(model_dict[nm].state_dict(), server_sd)
 
-                # FLAME hyperparams (safely fallback if missing)
                 flame_noise = self.params.get('flame_noise', 1e-3)
                 exp_dir     = self.params.get('exp_dir', "")
                 cur_iter    = getattr(self, "current_iter", 0)
 
-                # Run FLAME: returns (server_grad_delta, client_weights)
                 server_grad, client_weights = flame_aggr(
                     server_model_state_dict=server_sd,
                     client_updates_dict=client_updates_dict,
@@ -1516,200 +1883,184 @@ class Helper:
                     iter=cur_iter
                 )
 
-                # Merge delta into absolute new server state (absolute weights)
+                # absolute new server weights
                 new_server_sd = get_model_merged(server_grad, server_sd, assume_delta=True)
 
-                # --- Logging in your house style ---
-                malicious_weight_sel = self.malicious_weight_percentage(client_weights, self.malicious_names)
-                ordered_client_w_values = self.ordered_client_weight_values(client_weights)
-                self.weights_csv_logger.append_csv(ordered_client_w_values + [malicious_weight_sel])
+                # logging / CSV
+                malicious_weight_sel = self.malicious_weight_percentage(client_weights, list(mal_id_set)) \
+                    if hasattr(self, "malicious_weight_percentage") else None
+                if hasattr(self, "ordered_client_weight_values"):
+                    ordered = self.ordered_client_weight_values(client_weights)
+                    if hasattr(self, "weights_csv_logger"):
+                        self.weights_csv_logger.append_csv(ordered + ([malicious_weight_sel] if malicious_weight_sel is not None else []))
+                _log_client_weights("FLAME", client_weights)
 
-                logger_line_nonzero = []
-                logger_line_zero    = []
-                for name, w in client_weights.items():
-                    tag = f"{name}_M" if (int(str(name)[5:]) in self.malicious_names) else name
-                    pair = f"{tag}: {w:.4f}"
-                    if w != 0:
-                        logger_line_nonzero.append(pair)
-                    else:
-                        logger_line_zero.append(pair)
+                # fill accumulator with absolute weights
+                weight_accumulator = {k: new_server_sd[k].to(self.cuda_device).detach().clone()
+                                    for k in first_sd.keys()}
 
-                logger.info(f"FLAME non-zero weights: {logger_line_nonzero}")
-                logger.info(f"FLAME zero weights: {logger_line_zero}")
-
-                # Convert state_dict to your expected return format (absolute)
-                weight_accumulator = {}
-                for key, param in model_dict[next(iter(model_dict))].state_dict().items():
-                    # ensure same device/dtype as your pipeline expects
-                    weight_accumulator[key] = new_server_sd[key].to(self.cuda_device).detach().clone()
-
+        # ---------------- Geometric Median ----------------
         elif aggregation_method == 'geom_median':
             with torch.no_grad():
-                model_sample_weight_dict = self.sampling_weight_layer(self.model_dict, self.sampling_layer)
+                model_sample_weight_dict = self.sampling_weight_layer(model_dict, self.sampling_layer)
                 geo_med, client_weights = geometric_median(model_sample_weight_dict, number_of_clients,
-                                                           method='weiszfeld', options={})
-                malicious_weight_sel = self.malicious_weight_percentage(client_weights, self.malicious_names)
-                ordered_client_w_values = self.ordered_client_weight_values(client_weights)
-                self.weights_csv_logger.append_csv(ordered_client_w_values + [malicious_weight_sel])
+                                                        method='weiszfeld', options={})
+                malicious_weight_sel = self.malicious_weight_percentage(client_weights, list(mal_id_set)) \
+                    if hasattr(self, "malicious_weight_percentage") else None
+                if hasattr(self, "ordered_client_weight_values"):
+                    ordered = self.ordered_client_weight_values(client_weights)
+                    if hasattr(self, "weights_csv_logger"):
+                        self.weights_csv_logger.append_csv(ordered + ([malicious_weight_sel] if malicious_weight_sel is not None else []))
+                _log_client_weights("geom_median", client_weights)
 
-                logger_line = []
-
-                for i in self.malicious_sample:
-                    key = "model" + str(i) + "_M"
-                    pair = "{}: {:.1f}".format(key, client_weights["model" + str(i)])
-                    logger_line.append(pair)
-
-                for i in self.honest_sample:
-                    key = "model" + str(i)
-                    pair = "{}: {:.1f}".format(key, client_weights[key])
-                    logger_line.append(pair)
-
-                logger.info(f"client_weights in aggr: {logger_line}")
             weight_accumulator = self.weighted_average(model_dict, client_weights)
+
+        # ---------------- Krum variants ----------------
         elif aggregation_method == 'single-krum':
             weight_accumulator = self.krum_get_weight_accumulator(model_dict, krum_m=1)
+
         elif aggregation_method == 'multi-krum':
             weight_accumulator = self.krum_get_weight_accumulator(model_dict, krum_m=self.params['krum_m'])
+
+        # ---------------- Foolsgold ----------------
         elif aggregation_method == 'foolsgold':
             with torch.no_grad():
-                model_sample_weight_dict = self.sampling_weight_layer(self.model_dict, self.sampling_layer)
+                model_sample_weight_dict = self.sampling_weight_layer(model_dict, self.sampling_layer)
 
+                # build history
                 for name, weight in model_sample_weight_dict.items():
-                    if name in self.memory_dict.keys():
-                        self.memory_dict[name].append(weight)
-                        if len(self.memory_dict[name]) == self.history_len + 1:
-                            # keep the history length not increasing
-                            self.memory_dict[name].pop(0)
-                    else:
-                        self.memory_dict[name] = [weight]
+                    self.memory_dict.setdefault(name, [])
+                    self.memory_dict[name].append(weight)
+                    if len(self.memory_dict[name]) > self.history_len:
+                        self.memory_dict[name].pop(0)
 
                 historical_weights = {}
                 for name, weights in self.memory_dict.items():
                     for w in weights:
-                        if name in historical_weights.keys():
-                            historical_weights[name] += w
-                        else:
-                            historical_weights[name] = w
+                        historical_weights[name] = historical_weights.get(name, 0) + w
 
-                client_weights = foolsgold(historical_weights)
-                malicious_weight_sel = self.malicious_weight_percentage(client_weights, self.malicious_names)
-                ordered_client_w_values = self.ordered_client_weight_values(client_weights)
-                self.weights_csv_logger.append_csv(ordered_client_w_values + [malicious_weight_sel])
+                if len(historical_weights) == 0:
+                    client_weights = {k: 1.0 for k in model_dict.keys()}
+                elif len(historical_weights) == 1:
+                    only = next(iter(historical_weights.keys()))
+                    client_weights = {k: (1.0 if k == only else 0.0) for k in model_dict.keys()}
+                else:
+                    client_weights = foolsgold(historical_weights)
 
-                logger_line1 = []
-                logger_line2 = []
-                # logger unzero weights
-                for name, weight in client_weights.items():
-                    if weight != 0:
-                        if int(name[5:]) in self.malicious_sample:
-                            key = name + "_M"
-                            pair = "{}: {:.4f}".format(key, client_weights[name])
-                            logger_line1.append(pair)
-                        else:
-                            pair = "{}: {:.4f}".format(name, client_weights[name])
-                            logger_line1.append(pair)
-                    else:
-                        if int(name[5:]) in self.malicious_sample:
-                            key = name + "_M"
-                            pair = "{}: {:.4f}".format(key, client_weights[name])
-                            logger_line2.append(pair)
-                        else:
-                            pair = "{}: {:.4f}".format(name, client_weights[name])
-                            logger_line2.append(pair)
-
-                logger.info(f"foolsgold non zero weights: {logger_line1}")
-                logger.info(f"foolsgold zero weights: {logger_line2}")
+                malicious_weight_sel = self.malicious_weight_percentage(client_weights, list(mal_id_set)) \
+                    if hasattr(self, "malicious_weight_percentage") else None
+                if hasattr(self, "ordered_client_weight_values"):
+                    ordered = self.ordered_client_weight_values(client_weights)
+                    if hasattr(self, "weights_csv_logger"):
+                        self.weights_csv_logger.append_csv(ordered + ([malicious_weight_sel] if malicious_weight_sel is not None else []))
+                _log_client_weights("foolsgold", client_weights)
 
             weight_accumulator = self.weighted_average(model_dict, client_weights)
+
+        # ---------------- Contra (FG on a subset with reputation) ----------------
         elif aggregation_method == 'contra':
             logger.info(f"reputation_dict: {self.reputation_dict}")
 
-            # clients selection based on reputation
-            total = sum(self.reputation_dict.values(), 0.0)
-            if total == 0:
-                total = 1e-7
+            # normalize reputation
+            total = sum(self.reputation_dict.values()) or 1e-7
             self.reputation_dict = {k: v / total for k, v in self.reputation_dict.items()}
             sorted_keys = sorted(self.reputation_dict, key=self.reputation_dict.get, reverse=True)
 
+            # contra score
             for w in sorted_keys:
-                self.contra_sorted_dict[w] = (self.reputation_dict[w] * self.contra_f * (
-                        1 - self.contra_f)) + self.contra_f
-            key_list = list(self.contra_sorted_dict.keys())
-            value_list = list(self.contra_sorted_dict.values())
-            # in case value_list has negative values
-            if min(value_list) < 0:
-                value_list = [x - min(value_list) for x in value_list]
-            agent_name_keys = np.random.choice(key_list, self.params["contra_clients_selection"],
-                                               p=value_list / np.sum(value_list), replace=False)
+                self.contra_sorted_dict[w] = (self.reputation_dict[w] * self.contra_f * (1 - self.contra_f)) + self.contra_f
 
-            logger_line = []
-            for name in agent_name_keys:
-                if int(name[5:]) in self.malicious_names:
-                    logger_line.append(name + "_M")
+            # 1) restrict to this round's active clients
+            active_keys = set(model_dict.keys())
+            key_list = [k for k in self.contra_sorted_dict.keys() if k in active_keys]
+
+            # 2) build probs aligned to key_list
+            value_list = np.array([self.contra_sorted_dict[k] for k in key_list], dtype=float)
+            if value_list.size == 0:
+                # no active keys? fall back to using all model_dict keys uniformly
+                key_list = list(model_dict.keys())
+                value_list = np.ones(len(key_list), dtype=float)
+
+            # 3) sanitize scores and ensure enough positive mass
+            if not np.all(np.isfinite(value_list)):
+                value_list = np.ones_like(value_list, dtype=float)
+
+            mn = np.min(value_list) if value_list.size else 0.0
+            if mn < 0:
+                value_list = value_list - mn  # shift negatives to zero
+
+            # 4) clamp how many to draw
+            sel_n = min(int(self.params["contra_clients_selection"]), len(key_list))
+            sel_n = max(1, sel_n)
+
+            # build a probability vector 'p' that has at least sel_n positive entries
+            pos_idx = np.where(value_list > 0)[0]
+
+            if pos_idx.size < sel_n:
+                # fallback: pick the top-sel_n by score and sample uniformly over them
+                if len(key_list) == 0:
+                    agent_name_keys = []
                 else:
-                    logger_line.append(name)
-            logger.info(f"contra selected clients: {logger_line}")
+                    take = min(sel_n, len(key_list))
+                    top_idx = np.argsort(value_list)[-take:]
+                    p = np.zeros_like(value_list, dtype=float)
+                    p[top_idx] = 1.0 / take
+                    agent_name_keys = np.random.choice(key_list, take, p=p, replace=False)
+            else:
+                # normalize over positive entries only
+                p = np.zeros_like(value_list, dtype=float)
+                p[pos_idx] = value_list[pos_idx] / np.sum(value_list[pos_idx])
+                agent_name_keys = np.random.choice(key_list, sel_n, p=p, replace=False)
 
-            # Keep the history
-            model_sample_weight_dict = self.sampling_weight_layer(self.model_dict, self.sampling_layer)
-            with torch.no_grad():
-                for name, weight in model_sample_weight_dict.items():
-                    if name in self.memory_dict.keys():
-                        self.memory_dict[name].append(weight)
-                        if len(self.memory_dict[name]) == self.history_len + 1:
-                            # keep the history length not increasing
-                            self.memory_dict[name].pop(0)
-                    else:
-                        self.memory_dict[name] = [weight]
+            logger.info(f"contra selected clients: "
+                        f"{[n + ('_M' if int(n[5:]) in self.malicious_names else '') for n in agent_name_keys]}")
 
-                historical_weights = {}
-                for name, weights in self.memory_dict.items():
-                    for w in weights:
-                        if name in historical_weights.keys():
-                            historical_weights[name] += w
-                        else:
-                            historical_weights[name] = w
+            # strip the cosmetic "_M" marker before filtering
+            agent_name_keys_norm = {k.replace("_M", "") for k in agent_name_keys}
 
-            # use foolsgold
-            selected_model_dict = dict()
+            # history (only for selected; normalized keys)
+            model_sample_weight_dict = self.sampling_weight_layer(
+                {k: v for k, v in model_dict.items() if k in agent_name_keys_norm}, self.sampling_layer
+            )
+            for name, weight in model_sample_weight_dict.items():
+                self.memory_dict.setdefault(name, [])
+                self.memory_dict[name].append(weight)
+                if len(self.memory_dict[name]) > self.history_len:
+                    self.memory_dict[name].pop(0)
 
-            with torch.no_grad():
-                for name, weight in self.model_dict.items():
-                    if name in agent_name_keys:
-                        selected_model_dict[name] = weight
-                contra_sample_weight_dict = self.sampling_weight_layer(selected_model_dict, self.sampling_layer)
+            # foolsgold on selected (guard tiny pools)
+            if len(model_sample_weight_dict) == 0:
+                client_weights = {k: 1.0 for k in model_dict.keys()}
+            elif len(model_sample_weight_dict) == 1:
+                only = next(iter(model_sample_weight_dict.keys()))
+                client_weights = {k: (1.0 if k == only else 0.0) for k in model_dict.keys()}
+            else:
+                client_weights, self.reputation_dict = foolsgold_new(model_sample_weight_dict, self.reputation_dict)
+                # give 0 to non-selected
+                for name in model_dict.keys():
+                    client_weights.setdefault(name, 0.0)
 
-            # update the reputation dict
-            client_weights, self.reputation_dict = foolsgold_new(contra_sample_weight_dict, self.reputation_dict)
-
-            # for not selected clients, their weights are 0
-            for name in model_dict.keys():
-                if name not in client_weights.keys():
-                    client_weights[name] = 0
-
-            malicious_weight_sel = self.malicious_weight_percentage(client_weights, self.malicious_names)
-            ordered_client_w_values = self.ordered_client_weight_values(client_weights)
-            self.weights_csv_logger.append_csv(ordered_client_w_values + [malicious_weight_sel])
-
-            # normalize the reputation
-            maxr = max(self.reputation_dict.values())
+            # renormalize reputation [0,1]
+            maxr = max(self.reputation_dict.values()) or 1.0
             for k in self.reputation_dict:
                 self.reputation_dict[k] = self.reputation_dict[k] / maxr
 
             weight_accumulator = self.weighted_average(model_dict, client_weights)
+
+
+        # ---------------- Coord-median / Trimmed mean / Bulyan ----------------
         elif aggregation_method == 'coordinate_wise_median':
             weight_accumulator = coordinate_wise_median(model_dict)
+
         elif aggregation_method == 'trimmed_mean':
             weight_accumulator = trimmed_mean(model_dict, self.params['trimmed_mean_m'])
-        elif aggregation_method == 'bulyan':
-            # Use the clients selected from multi-krum
-            with torch.no_grad():
-                model_sample_weight_dict = self.sampling_weight_layer(self.model_dict, self.sampling_layer)
-                muti_krum_m, krum_clients, client_weights = krum(model_sample_weight_dict, self.params['krum_f'],
-                                                                 number_of_clients - 2 * self.params['bulyan_m'])
-                krum_selected_model_dict = {key: model_dict[key] for key in krum_clients}
 
-                # trimmed_mean
+        elif aggregation_method == 'bulyan':
+            with torch.no_grad():
+                model_sample_weight_dict = self.sampling_weight_layer(model_dict, self.sampling_layer)
+                muti_krum_m, krum_clients, client_weights = krum(model_sample_weight_dict, self.params['krum_f'],
+                                                                number_of_clients - 2 * self.params['bulyan_m'])
+                krum_selected_model_dict = {key: model_dict[key] for key in krum_clients}
                 weight_accumulator = trimmed_mean(krum_selected_model_dict, 2 * self.params['bulyan_m'])
         else:
             warnings.warn("unknown aggregation method")
@@ -1719,37 +2070,106 @@ class Helper:
 
         return weight_accumulator
 
+
+    # def krum_get_weight_accumulator(self, model_dict, krum_m):
+    #     with torch.no_grad():
+    #         model_sample_weight_dict = self.sampling_weight_layer(model_dict, self.sampling_layer)
+    #         muti_krum_m, krum_clients, client_weights = krum(
+    #             model_sample_weight_dict,
+    #             int(self.params['krum_f']),
+    #             int(krum_m)
+    #         )
+
+    #         malicious_weight_sel = self.malicious_weight_percentage(client_weights, self.malicious_names)
+    #         ordered_client_w_values = self.ordered_client_weight_values(client_weights)
+    #         self.weights_csv_logger.append_csv(ordered_client_w_values + [malicious_weight_sel])
+
+    #         krum_clients = list(map(lambda i: int(i[5:]), krum_clients))
+    #         logger_line = []
+
+    #         logger_clients = unique(self.malicious_sample + self.honest_sample + krum_clients)
+    #         for i in logger_clients:
+    #             if i in self.malicious_names:
+    #                 key = "model" + str(i) + "_M"
+    #                 pair = "{}: {:.1f}".format(key, client_weights["model" + str(i)])
+    #                 logger_line.append(pair)
+    #             else:
+    #                 key = "model" + str(i)
+    #                 pair = "{}: {:.1f}".format(key, client_weights[key])
+    #                 logger_line.append(pair)
+
+    #         mistakes = [i for i in krum_clients if i in self.malicious_names]
+
+    #         if len(mistakes) > 0:
+    #             logger.info(f"mistakenly chosen: {mistakes}")
+    #         logger.info(f"krum score: {logger_line}")
+    #     weight_accumulator = self.weighted_average(model_dict, client_weights)
+    #     return weight_accumulator
+
     def krum_get_weight_accumulator(self, model_dict, krum_m):
         with torch.no_grad():
-            model_sample_weight_dict = self.sampling_weight_layer(self.model_dict, self.sampling_layer)
-            muti_krum_m, krum_clients, client_weights = krum(model_sample_weight_dict, self.params['krum_f'],
-                                                             krum_m)
+            model_sample_weight_dict = self.sampling_weight_layer(model_dict, self.sampling_layer)
+            muti_krum_m, krum_clients, client_weights = krum(
+                model_sample_weight_dict,
+                int(self.params['krum_f']),
+                int(krum_m)
+            )
 
             malicious_weight_sel = self.malicious_weight_percentage(client_weights, self.malicious_names)
             ordered_client_w_values = self.ordered_client_weight_values(client_weights)
             self.weights_csv_logger.append_csv(ordered_client_w_values + [malicious_weight_sel])
 
-            krum_clients = list(map(lambda i: int(i[5:]), krum_clients))
+            # --- helpers (no exceptions, deterministic normalization) ---
+            def base_name(name: str) -> str:
+                # "model15_M" -> "model15"; "model15" -> "model15"
+                return name.split("_", 1)[0]
+
+            def id_from_name(name: str) -> int:
+                b = base_name(name)
+                assert b.startswith("model"), f"unexpected key format: {name}"
+                return int(b[5:])
+
+            # ids for krum-selected clients (from their names)
+            krum_ids = [id_from_name(nm) for nm in krum_clients]
+
+            # normalize your sets to ints
+            mal_ids = [int(x) for x in self.malicious_names]
+            hon_ids = [int(x) for x in self.honest_sample]
+
+            # Build a map of ACTIVE ids -> actual key in client_weights
+            present_map = {}
+            for k in client_weights.keys():
+                bid = id_from_name(k)
+                # if duplicate ids with different suffixes appear, last write wins; OK for logging
+                present_map[bid] = k
+
+            # Only log clients that are actually present this round
+            # (intersection with present ids)
+            seen = set()
+            logger_ids_all = mal_ids + hon_ids + krum_ids
+            logger_ids = []
+            for cid in logger_ids_all:
+                if cid in present_map and cid not in seen:
+                    seen.add(cid)
+                    logger_ids.append(cid)
+
+            # Build log lines using actual keys; '_M' is cosmetic only
             logger_line = []
+            for cid in logger_ids:
+                key_real = present_map[cid]            # actual dict key present this round
+                w = client_weights[key_real]
+                label = f"model{cid}{'_M' if cid in mal_ids else ''}"
+                logger_line.append(f"{label}: {w:.1f}")
 
-            logger_clients = unique(self.malicious_sample + self.honest_sample + krum_clients)
-            for i in logger_clients:
-                if i in self.malicious_names:
-                    key = "model" + str(i) + "_M"
-                    pair = "{}: {:.1f}".format(key, client_weights["model" + str(i)])
-                    logger_line.append(pair)
-                else:
-                    key = "model" + str(i)
-                    pair = "{}: {:.1f}".format(key, client_weights[key])
-                    logger_line.append(pair)
-
-            mistakes = [i for i in krum_clients if i in self.malicious_names]
-
+            # "mistakenly chosen": KRUM-chosen AND malicious (both by id)
+            mistakes = [cid for cid in krum_ids if cid in mal_ids]
             if len(mistakes) > 0:
                 logger.info(f"mistakenly chosen: {mistakes}")
             logger.info(f"krum score: {logger_line}")
+
         weight_accumulator = self.weighted_average(model_dict, client_weights)
         return weight_accumulator
+
 
     def malicious_weight_percentage(self, client_weights, malicious_names):
         malicious_weight = 0
@@ -1811,41 +2231,36 @@ class Helper:
             weight_accumulator = self.get_aggregated_weights(model_dict, self.aggregation_method)
 
         with torch.no_grad():
-            if self.params['server_lr_fix'] is False:
-                if iteration == 0:
-                    for name, param in main_model.state_dict().items():
-                        # directly use weight_accumulator as server's weight
-                        get_layer_weight(main_model, name).data = weight_accumulator[name].data.clone()
-                    # use weight_accumlator * learning rate
-                else:
-                    logger.info(f"server lr: {self.server_lr}")
-                    for name, param in main_model.state_dict().items():
-                        # 3 way to learn from the new weights and keep the old part of the old weights
-
-                        # 1. Add the new weight * lr to the existed weight
-                        # get_layer_weight(main_model, name).data.add_(weight_accumulator[name].data.clone() * lr)
-
-                        # 2. Use the new weight as weight, give up the existed weight
-                        # get_layer_weight(main_model, name).data = weight_accumulator[name].data.clone()
-
-                        # 3. Distribute between the existed weight and the new weights using lr, together is 1
-                        get_layer_weight(main_model, name).data = (1 - lr) * get_layer_weight(main_model,
-                                                                                              name).data.clone() + \
-                                                                  lr * weight_accumulator[name].data.clone()
-
-                    self.server_lr *= (
-                            1. / (1. + self.server_lr_decay * iteration))  # if iteration is in decay schedule
-                    if self.server_lr < self.server_lr_floor:
-                        self.server_lr = self.server_lr_floor
+            # Use FedAvg semantics by default unless you explicitly want momentum-like blending
+            if self.params.get('server_lr_fix', True):
+                lr = 1.0
             else:
-                # fixed learning rate without a changing schedule
-                logger.info(f"server lr: {self.server_lr}")
-                for name, param in main_model.state_dict().items():
-                    get_layer_weight(main_model, name).data = (1 - self.server_lr) * get_layer_weight(
-                        main_model, name).data.clone() + \
-                                                              self.server_lr * weight_accumulator[
-                                                                  name].data.clone()
-
+                lr = float(lr)
+            # First round: just copy (for non-BN keys)
+            if iteration == 0 or lr >= 0.999999:
+                for name, _ in main_model.state_dict().items():
+                    dst = get_layer_weight(main_model, name).data
+                    src = weight_accumulator[name].to(self.cuda_device)
+                    # match dtype
+                    if dst.dtype.is_floating_point:
+                        dst.copy_(src.to(dst.dtype))
+                    else:
+                        # e.g., num_batches_tracked (int64)
+                        dst.copy_(src.to(dst.dtype))
+            else:
+                # Blend old and new (for non-BN keys)
+                logger.info(f"server lr: {lr}")
+                for name, _ in main_model.state_dict().items():
+                    dst = get_layer_weight(main_model, name).data
+                    src = weight_accumulator[name].to(self.cuda_device)
+                    if dst.dtype.is_floating_point:
+                        old = dst
+                        new = src.to(dst.dtype)
+                        dst.copy_((1.0 - lr) * old + lr * new)
+                    else:
+                        # integer buffers (e.g., num_batches_tracked): cannot blend -> copy new
+                        dst.copy_(src.to(dst.dtype))
+        
         return main_model
 
     def send_main_model_to_nodes_and_update_model_dict(self, main_model, model_dict):
@@ -1907,3 +2322,36 @@ class Helper:
                 distances.append(d.item())
             resultTable.append(distances)
         return (resultTable)
+    
+    
+    def sample_clients_for_round(self):
+        N, k = self.num_clients, self.k_per_round
+
+        # If selecting all, short-circuit (works for both modes)
+        if k >= N:
+            return list(range(N))
+
+        if self.selection_mode == "random":
+            # Uniform draw from all clients
+            return self._rng.choice(N, size=k, replace=False).tolist()
+
+        # fixed_pct: enforce a fixed malicious ratio among the selected set
+        mal_ids = sorted(self.malicious_ids)
+        ben_ids = [i for i in range(N) if i not in self.malicious_ids]
+
+        m_target = int(round(k * self.malicious_selection_ratio))
+        m_target = min(len(mal_ids), max(0, m_target))
+        b_target = max(0, k - m_target)
+
+        sel_m = self._rng.choice(mal_ids, size=m_target, replace=False).tolist() if m_target else []
+        sel_b = self._rng.choice(ben_ids, size=b_target, replace=False).tolist() if b_target else []
+        out = sel_m + sel_b
+        self._rng.shuffle(out)
+        return out
+
+    def log_once(self, key, msg):
+        if key not in self._logged_once:
+            logger.info(msg)
+            self._logged_once.add(key)
+            
+            

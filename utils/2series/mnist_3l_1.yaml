@@ -1,11 +1,12 @@
 ---
 if_series: True
-cuda_device: 0
+cuda_device: 3
 type: mnist
 number_of_clients: 100
 select_precentage: 10
+selection_mode: fixed_pct
 learning_rate: 0.001 # 0.1, 0.05
-iterations: 200 #40, 24
+iterations: 150 #40, 24
 early_stopping: False
 early_stopping_tolerance: 3
 early_stopping_min_delta: 0.0
@@ -36,7 +37,7 @@ available_layers: ['fc1.weight', 'fc2.weight', 'fc3.weight']
 #aggregation_method_s: ['geom_median', 'single-krum', 'coordinate_wise_median']
 #pre_aggr_method_s: ['NNM', 'bucketing', 'None']
 
-aggregation_method_s: ['fedavg', 'geom_median', 'foolsgold', 'contra']
+aggregation_method_s: ['contra', 'fedavg', 'geom_median', 'foolsgold']
 pre_aggr_method_s: ['None']
 
 krum_f: 8 # < 20/2 - 1
@@ -48,13 +49,13 @@ trimmed_mean_m: 4
 bulyan_m: 4
 
 # Malicious Clients
-number_of_malicious_s: [25]
+number_of_malicious_s: [30]
 # untargeted1 y = existed y label + 1, 1->2, ... , 9 -> 1
 # untargeted2 y = existed y label -> random label of all class with same probability
 # malicious_modes: 'untargeted2' # 'untargeted1', 'untargeted2', 'label_flipping', 'backdoor'
 # baseline: 'little', 'explicit boosting', 'min-max', 'min-sum', 'RL', 'None'
 # attack_method: 'RL'
-attack_method_s: ['None', 'RL', 'little', 'explicit boosting', 'min-max', 'min-sum', 'RL']
+attack_method_s: ['RL', 'None', 'little', 'explicit boosting', 'min-max', 'min-sum', 'RL']
 
 
 # RL based Malicious Attack

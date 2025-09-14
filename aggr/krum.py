@@ -4,59 +4,50 @@ import torch
 # Machine Learning with Adversaries: Byzantine Tolerant Gradient Descent (Peva Blanchard)
 # https://papers.nips.cc/paper_files/paper/2017/hash/f4b9ec30ad9f68f89b29639786cb62ef-Abstract.html
 def krum(model_sample_weight_dict, f, m):
-    n = len(model_sample_weight_dict)
-    if f >= n / 2 - 1:
-        f = n / 2 - 2
-    assert f < (n / 2 - 1), "f should be less than n/2 - 1"
-    if m >= n:
-        m = n - 1
-    assert 0 <= m <= n, "m should >=0 and <= n"
-    # if m == 1, original krum; m > 1 multi-krum; m == n, FedAvg
+    # normalize types
+    n = int(len(model_sample_weight_dict))
+    f = int(f)
+    m = int(m)
 
-    # get krum scores
-    krum_scores = {}
+    # KRUM feasibility (all ints)
+    half_minus1 = (n // 2) - 1
+    if f >= half_minus1:
+        f = max(0, half_minus1 - 1)   # ensure f ≤ n//2 - 2
+    assert f < half_minus1, f"f must be < n//2 - 1; got n={n}, f={f}"
+
+    max_m = n - f - 2                  # neighbors kept in KRUM
+    if max_m <= 0:
+        raise ValueError(f"KRUM requires n ≥ 2f + 3; got n={n}, f={f}")
+
+    m = max(1, min(m, max_m))          # 1 ≤ m ≤ n - f - 2
+
+    # pairwise L2 distances
     l2_dist = {k: [] for k in model_sample_weight_dict.keys()}
-    for name1, value1 in model_sample_weight_dict.items():
-        for name2, value2 in model_sample_weight_dict.items():
-            if name1 != name2:
-                # value1 = torch.flatten(value1)
-                # value2 = torch.flatten(value2)
-                value1 = torch.flatten(value1).float()
-                value2 = torch.flatten(value2).float()
-                value1 = value1.unsqueeze_(0)
-                value2 = value2.unsqueeze_(0)
-                dist = torch.cdist(value1, value2, p=2)
-                # print("dist", dist)
-                l2_dist[name1].append(dist.item())
+    for name1, v1 in model_sample_weight_dict.items():
+        v1 = torch.flatten(v1).float().unsqueeze(0)
+        for name2, v2 in model_sample_weight_dict.items():
+            if name1 == name2:
+                continue
+            v2 = torch.flatten(v2).float().unsqueeze(0)
+            l2_dist[name1].append(torch.cdist(v1, v2, p=2).item())
 
-    # print("l2_dist", l2_dist)
+    # KRUM scores: sum of smallest (n - f - 2) distances
+    krum_scores = {}
+    take = n - f - 2                   # still an int
     for name, dists in l2_dist.items():
-        # sum of first n-f-2 distances
-        # print('dists', len(dists))
-        sorted_dist = dists
-        sorted_dist.sort()
-        # print("sorted_dist sum", sum(sorted_dist))
-        krum_score = sum(sorted_dist[:n - f - 2])
-        # print("krum_score", krum_score)
-        krum_scores[name] = krum_score
+        sd = sorted(dists)
+        if take > len(sd):
+            raise ValueError(f"take={take} > neighbors={len(sd)}; n={n}, f={f}")
+        krum_scores[name] = sum(sd[:take])
 
-    sorted_krum_scores = sorted(krum_scores.items(), key=lambda x: x[1])
+    sorted_krum = sorted(krum_scores.items(), key=lambda x: x[1])
+    multi_krum_m = sorted_krum[:m]
+    krum_clients = [k for k, _ in multi_krum_m]
 
-    # print("sorted_krum_scores", sorted_krum_scores)
-
-    multi_krum_m = sorted_krum_scores[:m]
-    krum_clients = [i[0] for i in multi_krum_m]
-    total_weights = n * 100
+    # weights
+    total_weights = n * 100.0
     ind_weight = total_weights / m
-
-    client_weights = dict.fromkeys(model_sample_weight_dict.keys(), 0)
-
-    for name, weight in client_weights.items():
-        if name in krum_clients:
-            client_weights[name] = ind_weight
-        else:
-            client_weights[name] = 0
-
-    # print("client_weights", client_weights)
+    client_weights = {k: (ind_weight if k in krum_clients else 0.0)
+                      for k in model_sample_weight_dict.keys()}
 
     return multi_krum_m, krum_clients, client_weights

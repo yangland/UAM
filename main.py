@@ -8,10 +8,9 @@ import shutil
 from visualization import plotting_global, plotting_training_curves,\
      images_to_video, plot_node_w_order, plot_node_w_order_1d
 from csv_logging import Csv_logging
-
+from helper import logger  # reuse the configured "uam" logger
 
 def exp_w_plotting(current_time, series_time, params_loaded, cuda_device):
-    logger = logging.getLogger("logger")
     dataset_type = params_loaded['type']
 
     if dataset_type == 'mnist':

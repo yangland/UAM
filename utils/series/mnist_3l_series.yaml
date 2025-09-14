@@ -1,10 +1,10 @@
 ---
 if_series: True
-cuda_device: 4
+cuda_device: 5
 type: mnist
 number_of_clients: 20
 learning_rate: 0.001 # 0.1, 0.05
-iterations: 150 #40, 24
+iterations: 40 #40, 24
 early_stopping: False
 early_stopping_tolerance: 3
 early_stopping_min_delta: 0.0
@@ -53,7 +53,7 @@ number_of_malicious_s: [5]
 # malicious_modes: 'untargeted2' # 'untargeted1', 'untargeted2', 'label_flipping', 'backdoor'
 # baseline: 'little', 'explicit boosting', 'min-max', 'min-sum', 'RL', 'None'
 # attack_method: 'RL'
-attack_method_s: ['None', 'little', 'explicit boosting', 'min-max', 'min-sum', 'RL']
+attack_method_s: ['little', 'RL', 'None', 'explicit boosting', 'min-max', 'min-sum', 'RL']
 
 
 # RL based Malicious Attack
