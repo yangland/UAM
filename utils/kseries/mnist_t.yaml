@@ -1,9 +1,9 @@
 ---
 if_series: True
-cuda_device: 5
+cuda_device: 3
 type: mnist
 number_of_clients: 20
-learning_rate: 0.001 # 0.1, 0.05
+learning_rate: 0.01 # 0.1, 0.05
 iterations: 100 #40, 24
 early_stopping: False
 early_stopping_tolerance: 3
@@ -19,7 +19,7 @@ if_noniid_s: [True]
 # dirichlet_alpha
 dirichlet_alpha_s: [0.1]
 num_classes: 10
-train_amount: 5400
+train_amount: 20000
 random_seed: 0
 nn_model: Mnist_3L
 class_names: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']

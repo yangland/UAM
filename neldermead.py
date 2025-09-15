@@ -204,8 +204,16 @@ class NelderMead:
                 return False
 
     def record(self, kpi, action, progress):
+        # --- add at the top: make sure action is valid & 1-D ---
+        if action is False or action is None:
+            raise RuntimeError("NelderMead.record received an invalid action (None/False).")
+        action = np.atleast_1d(np.array(action))
+        if action.ndim != 1:
+            raise RuntimeError(f"NelderMead.record expected a 1-D action, got shape {action.shape}.")
+        if not np.all(np.isfinite(action)):
+            raise RuntimeError("NelderMead.record received a non-finite action (NaN/Inf).")
+        
         action = np.array(action)
-
         if progress is True:
             if self.iters == 0:
                 self.history.append([action, kpi, None])
@@ -261,45 +269,33 @@ class NelderMead:
             return None
         return str(list(self.history[-1][0]))
 
-    def reach_restart_threshold(self, threshold):
-        if len(self.history) <= 2:
-            return False
-        elif len(self.history) >= 3:
-            last_reward = self.history[-1][2]
-            second_last_reward = self.history[-2][2]
-            # if last_reward > 0 and last_reward > second_last_reward:
-            if last_reward > 0:
-                self.rounds_no_improv += 1
-            else:
-                self.rounds_no_improv = 0
-            # when reach threshold
-            if self.rounds_no_improv == threshold:
-                self.rounds_no_improv = 0
-                logger.info(f"RL search restart at {len(self.history)} rounds")
-                return True
-            else:
-                return False
+    def reach_restart_threshold(self, threshold, eps=1e-3):
         """
+        Restart after 'threshold' consecutive rounds without *meaningful* improvement.
+        Here 'improvement' means the reward (current - previous accuracy) is < -eps.
+        """
+        if len(self.history) < 2:
+            return False
+
         last_reward = self.history[-1][2]
-        # second_last_reward = self.history[-2][2]
-        if last_reward is not None:
-            if last_reward <= 0:
-                self.rounds_no_improv = 0
-                return False
-            else:
-                if second_last_reward <= last_reward:
-                    self.rounds_no_improv = 0
-                else:
-                    self.rounds_no_improv += 1
-                    if self.rounds_no_improv == threshold+1:
-                        self.rounds_no_improv = 0
-                        logger.info(f"RL search restart at {len(self.history)} rounds")
-                        return True
-                    else:
-                        return False
-        else:
+        if last_reward is None:
             return False
-        """
+
+        # Improvement (accuracy dropped) -> negative reward
+        if last_reward < -eps:
+            # we improved; reset the counter
+            self.rounds_no_improv = 0
+        else:
+            # no meaningful improvement (flat or accuracy rose)
+            self.rounds_no_improv += 1
+
+        if self.rounds_no_improv >= threshold:
+            self.rounds_no_improv = 0
+            logger.info(f"RL search restart at {len(self.history)} rounds")
+            return True
+
+        return False
+
 
     def restart(self, new_start):
         self.triangle = generate_init_triangle(self.x_start, new_start, self.step)

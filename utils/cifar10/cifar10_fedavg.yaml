@@ -5,7 +5,7 @@ type: cifar10
 number_of_clients: 100
 select_precentage: 10
 selection_mode: fixed_pct
-learning_rate: 0.05 # 0.01, 0.05
+learning_rate: 0.01 # 0.01, 0.05
 iterations: 300 #10, 24
 early_stopping: False
 early_stopping_tolerance: 3
@@ -13,7 +13,7 @@ early_stopping_min_delta: 0.0
 numEpoch: 2 # 10
 batch_size: 32
 momentum: 0.9
-server_lr_fix: True
+server_lr_fix: False
 server_lr: 0.5 # 0.5, 0.05
 server_lr_decay: 'NA'
 server_lr_floor: 'NA'

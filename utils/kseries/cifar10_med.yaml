@@ -1,6 +1,6 @@
 ---
 if_series: True
-cuda_device: 6
+cuda_device: 5
 type: cifar10
 number_of_clients: 20
 learning_rate: 0.05 # 0.01, 0.05

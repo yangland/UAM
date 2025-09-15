@@ -1,10 +1,10 @@
 ---
 if_series: True
-cuda_device: 2
+cuda_device: 1
 type: mnist
-number_of_clients: 100
-select_precentage: 10
-selection_mode: fixed_pct
+number_of_clients: 20
+select_precentage: 100
+selection_mode: fixed_mali_subset
 learning_rate: 0.005 # 0.1, 0.05
 iterations: 200 #40, 24
 early_stopping: False
@@ -13,7 +13,7 @@ early_stopping_min_delta: 0.0
 numEpoch: 2 # 10
 batch_size: 32
 momentum: 0.9
-server_lr_fix: True
+server_lr_fix: False
 server_lr: 0.5 # 0.05
 server_lr_decay: 'NA'
 server_lr_floor: 'NA'
@@ -49,14 +49,15 @@ trimmed_mean_m: 4
 bulyan_m: 4
 
 # Malicious Clients
-number_of_malicious_s: [30]
+number_of_malicious_s: [5]
 # untargeted1 y = existed y label + 1, 1->2, ... , 9 -> 1
 # untargeted2 y = existed y label -> random label of all class with same probability
 # malicious_modes: 'untargeted2' # 'untargeted1', 'untargeted2', 'label_flipping', 'backdoor'
 # baseline: 'little', 'explicit boosting', 'min-max', 'min-sum', 'RL', 'None'
 # attack_method: 'RL'
 attack_method_s: ['RL', 'None', 'little', 'explicit boosting', 'min-max', 'min-sum', 'RL']
-
+Median_att: false
+White_box: false
 
 # RL based Malicious Attack
 rl_mode: "reverse_grad"

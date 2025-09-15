@@ -23,6 +23,7 @@ from models.emnist_cnn import EmnistCNN
 from models.cifar10_googlenet import GoogLeNet
 from models.cifar10_8l import Cifar10_8L
 from models.cifar10_18l import Cifar10_18L
+from models.squeezenet11_cifar import SqueezeNet11_CIFAR
 from models.cifar10_vgg import vgg11, vgg13, vgg16
 from models.kmnist_12l import Kmnist_12L
 from models.cifar100_mobilenetv2 import mobilenetv2
@@ -159,7 +160,7 @@ class Helper:
         if self.params['rl_manual']:
             self.rl_action = np.asarray([float(i) for i in self.params['manual_coordinates']])
         else:
-            self.rl_action = np.asarray([float('Inf') for i in self.params['x_start']])
+            self.rl_action = np.asarray([float(i) for i in self.params['x_start']])
 
         if self.if_series:
             self.master_path = f'./logs/series_{self.name}_{series_time}'
@@ -367,8 +368,17 @@ class Helper:
                                 best_empirical = \
                                     self.neldermead.history[rewards_empirical.index(min(rewards_empirical)) + 1][0]
                                 self.neldermead.restart(new_start=best_empirical)
+
+                                # Step NM until it proposes a real action
                                 self.rl_action = self.neldermead.nelder_mead()
+                                spins = 0
+                                while self.rl_action is False:
+                                    spins += 1
+                                    if spins > 100:
+                                        raise RuntimeError("NelderMead: no actionable point after 100 internal steps (init spot search).")
+                                    self.rl_action = self.neldermead.nelder_mead()
                                 self.neldermead.init_spot_search = False
+
                             else:
                                 if self.neldermead.reach_restart_threshold(self.rounds_before_restart):
                                     new_start = None
@@ -384,8 +394,16 @@ class Helper:
                                     self.neldermead.restart(new_start)
                                 else:
                                     pass
+                                # Step NM until it proposes a real action
                                 self.rl_action = self.neldermead.nelder_mead()
+                                spins = 0
                                 while self.rl_action is False:
+                                    spins += 1
+                                    if spins > 100:
+                                        raise RuntimeError(
+                                            f"NelderMead: no actionable point after 100 internal steps "
+                                            f"(mode={self.neldermead.mode}, submode={self.neldermead.submode})."
+                                        )
                                     self.rl_action = self.neldermead.nelder_mead()
                     else:
                         self.rl_action = self.neldermead.manual_coordinates
@@ -498,157 +516,132 @@ class Helper:
 
     def attacker_modify_trained_weights(self, grads_regular, attack_magnitude, goal_conc, rl_mode):
         with torch.no_grad():
+            # --- Scope targets to THIS ROUND ONLY ---
+            selected_keys = set(self.subset_dict.keys())                 # e.g., {"model3","model7",...}
+            mal_keys      = {f"model{i}" for i in self.malicious_names}  # all malicious model names
+            target_keys   = selected_keys & mal_keys                      # selected ∩ malicious
+            assert len(target_keys) > 0, "No malicious client selected this round, but attacker was invoked."
+
             if self.attack_method == 'explicit boosting':
-                K = 5 # 10
-                # boost towards the direction of malicious training
-                selected_keys = set(self.subset_dict.keys())   # e.g., {"model3","model7",...}
-                mal_keys = {f"model{i}" for i in self.malicious_names}
-                target_keys = selected_keys & mal_keys
-                
+                K = 5
+                # apply ONLY to selected malicious (target_keys)
                 for model_name in target_keys:
-                    for layer_name, param in self.main_model.state_dict().items():
-                        get_layer_weight(self.model_dict[model_name], layer_name).data = \
-                            get_layer_weight(self.model_dict_before[model_name], layer_name).clone() \
+                    for layer_name, _ in self.main_model.state_dict().items():
+                        get_layer_weight(self.model_dict[model_name], layer_name).data = (
+                            get_layer_weight(self.model_dict_before[model_name], layer_name).clone()
                             + K * get_layer_weight(grads_regular[model_name], layer_name).clone()
-                                      
+                        )
+
             elif self.attack_method == 'little':
-                # 1. average the malicious clients as mean
-                # 2. Z_max = 0.08, based on n = 20, m = 5
-                # 3. minus Z_max * std from mean
-                Z_max = 0.08
-
-                malicious_models = {f"model{int(cid)}": self.model_dict[f"model{int(cid)}"] for cid in self.malicious_names}
+                # stats computed on all malicious, applied to selected malicious
+                malicious_models = {k: self.model_dict[k] for k in mal_keys}
                 mean = self.get_aggregated_weights(malicious_models, 'fedavg')
+                Z_max = 0.08
                 std_dict = {}
-
-                for layer_name, param in self.main_model.state_dict().items():
+                for layer_name, _ in self.main_model.state_dict().items():
                     layer_list = []
-                    for model_name in self.model_dict.keys():
-                        if int(model_name[5:]) in self.malicious_names:
-                            model_dict_after = get_weights_from_model_dict(self.model_dict)
-                            layer_weight = get_layer_weight(model_dict_after[model_name], layer_name).clone()
-                            layer_list.append(layer_weight)
-                    stacked_layer_w = torch.stack(layer_list)
-                    # get standard deviation
-                    std = torch.std(stacked_layer_w.float(), dim=0, correction=0)
-                    std_dict[layer_name] = std
+                    model_dict_after = get_weights_from_model_dict(self.model_dict)  # full snapshot for std
+                    for k in mal_keys:
+                        layer_list.append(get_layer_weight(model_dict_after[k], layer_name).clone())
+                    stacked = torch.stack(layer_list)
+                    std_dict[layer_name] = torch.std(stacked.float(), dim=0, correction=0)
 
-                for model_name in self.model_dict.keys():
-                    if int(model_name[5:]) in self.malicious_names:
-                        for layer_name, param in self.main_model.state_dict().items():
-                            get_layer_weight(self.model_dict[model_name], layer_name).data = \
-                                mean[layer_name].float() + Z_max * std_dict[layer_name].float()
-                logger.info("deliver little attack")
+                for model_name in target_keys:
+                    for layer_name, _ in self.main_model.state_dict().items():
+                        get_layer_weight(self.model_dict[model_name], layer_name).data = (
+                            mean[layer_name].float() + Z_max * std_dict[layer_name].float()
+                        )
+
             elif self.attack_method in ['min-max', 'min-sum']:
+                # updates computed on all malicious, applied to selected malicious
                 n_attacker = 5
-                malicious_models = {f"model{int(cid)}": self.model_dict[f"model{int(cid)}"] for cid in self.malicious_names}
+                malicious_models = {k: self.model_dict[k] for k in mal_keys}
                 mean = self.get_aggregated_weights(malicious_models, 'fedavg')
                 mal_updates = {}
-
-                for layer_name, param in self.main_model.state_dict().items():
-                    layer_list = []
-                    for model_name in self.model_dict.keys():
-                        if int(model_name[5:]) in self.malicious_names:
-                            model_dict_after = get_weights_from_model_dict(self.model_dict)
-                            layer_weight = get_layer_weight(model_dict_after[model_name], layer_name).clone()
-                            layer_list.append(layer_weight)
-                    stacked_layer_w = torch.stack(layer_list)
-
+                model_dict_after = get_weights_from_model_dict(self.model_dict)  # full snapshot for stacking
+                for layer_name, _ in self.main_model.state_dict().items():
+                    layer_list = [get_layer_weight(model_dict_after[k], layer_name).clone() for k in mal_keys]
+                    stacked = torch.stack(layer_list)
                     if self.attack_method == 'min-max':
-                        mal_update = our_attack_dist(stacked_layer_w, mean[layer_name], n_attacker,
-                                                     self.cuda_device, dev_type='unit_vec')
-                    elif self.attack_method == 'min-sum':
-                        mal_update = our_attack_score(stacked_layer_w, mean[layer_name], n_attacker,
-                                                      self.cuda_device, dev_type='unit_vec')
-                    mal_updates[layer_name] = mal_update
+                        mal_updates[layer_name] = our_attack_dist(stacked, mean[layer_name], n_attacker,
+                                                                self.cuda_device, dev_type='unit_vec')
+                    else:
+                        mal_updates[layer_name] = our_attack_score(stacked, mean[layer_name], n_attacker,
+                                                                self.cuda_device, dev_type='unit_vec')
+                for model_name in target_keys:
+                    for layer_name, _ in self.main_model.state_dict().items():
+                        get_layer_weight(self.model_dict[model_name], layer_name).data = mal_updates[layer_name]
 
-                for model_name in self.model_dict.keys():
-                    if int(model_name[5:]) in self.malicious_names:
-                        for layer_name, param in self.main_model.state_dict().items():
-                            get_layer_weight(self.model_dict[model_name], layer_name).data = \
-                                mal_updates[layer_name]
             elif self.attack_method == 'UAM':
                 if rl_mode == "untargeted_label_flip":
-                    for model_name in self.model_dict.keys():
-                        if int(model_name[5:]) in self.malicious_names:
-                            for layer_name, param in self.main_model.state_dict().items():
-                                get_layer_weight(self.model_dict[model_name], layer_name).data = \
-                                    get_layer_weight(self.model_dict_before[model_name], layer_name).clone() \
-                                    + attack_magnitude * \
-                                    get_layer_weight(grads_regular[model_name], layer_name).clone()
-                        else:
-                            # leave the weights as it is
-                            pass
+                    # apply ONLY to selected malicious (target_keys)
+                    for model_name in target_keys:
+                        for layer_name, _ in self.main_model.state_dict().items():
+                            get_layer_weight(self.model_dict[model_name], layer_name).data = (
+                                get_layer_weight(self.model_dict_before[model_name], layer_name).clone()
+                                + attack_magnitude * get_layer_weight(grads_regular[model_name], layer_name).clone()
+                            )
+
                 elif rl_mode == "reverse_grad":
                     if goal_conc is None:
-                        # operate only on models that were BOTH selected this round and are malicious
-                        selected_keys = set(self.subset_dict.keys())                          # e.g., {"model3","model7",...}
-                        mal_keys      = {f"model{int(cid)}" for cid in self.malicious_names}  # {"model6","model7",...}
-                        target_keys   = selected_keys & mal_keys                              # selected ∩ malicious
-
+                        # standard reverse-grad on selected malicious
                         for model_name in target_keys:
                             for layer_name, _ in self.main_model.state_dict().items():
-                                if self.params.get('Median_att') is None or not self.params['Median_att']:
-                                    # standard reverse-grad step on selected-malicious only
+                                if self.params['Median_att'] is False:
                                     get_layer_weight(self.model_dict[model_name], layer_name).data = (
                                         get_layer_weight(self.model_dict_before[model_name], layer_name).clone()
                                         - attack_magnitude * get_layer_weight(grads_regular[model_name], layer_name).clone()
                                     )
                                 else:
-                                    # "median attack" (your code uses fedavg as the aggregator)
-                                    # black-box: use selected-malicious; white-box: use selected-honest
-                                    if self.params.get('White_box') is None or not self.params['White_box']:
-                                        base_pool = target_keys                                 # selected malicious in this round
+                                    # median-variant base pool: selected malicious (black-box) or selected honest (white-box)
+                                    if self.params['White_box'] is False:
+                                        base_pool = target_keys                  # selected malicious this round
                                     else:
-                                        base_pool = selected_keys - target_keys                  # selected honest in this round
+                                        base_pool = selected_keys - target_keys  # selected honest this round
+                                    assert len(base_pool) > 0, "Median attack base_pool empty for this round."
 
-                                    if not base_pool:
-                                        # nothing to aggregate from this round; skip safely
-                                        continue
-
-                                    model_list = {key: self.model_dict[key] for key in base_pool}
+                                    model_list = {k: self.model_dict[k] for k in base_pool}
                                     model_median = self.get_aggregated_weights(model_list, 'fedavg')
-
                                     get_layer_weight(self.model_dict[model_name], layer_name).data = (
                                         - model_median[layer_name].clone() * attack_magnitude
                                     )
 
                     else:
-                        for layer_name, param in self.main_model.state_dict().items():
+                        # diversity-control path; apply to selected malicious
+                        for layer_name, _ in self.main_model.state_dict().items():
+                            # mean over all malicious (global)
                             layers = []
                             for i in self.malicious_names:
-                                model_name = "model" + str(i)
-                                single_layer = torch.flatten(
-                                    get_layer_weight(self.model_dict[model_name], layer_name).data.clone())
-                                layers.append(single_layer)
+                                k = f"model{i}"
+                                layers.append(torch.flatten(get_layer_weight(self.model_dict[k], layer_name).data.clone()))
                             t = torch.stack(layers)
                             mean_t = torch.mean(t.float(), 0)
 
-                            for i in self.malicious_names:
-                                model_name = "model" + str(i)
+                            for i in [int(n[5:]) for n in target_keys]:
+                                model_name = f"model{i}"
                                 shape = get_layer_weight(self.model_dict[model_name], layer_name).data.size()
-                                single_layer = torch.flatten(
-                                    get_layer_weight(self.model_dict[model_name], layer_name).data.clone())
+                                single_layer = torch.flatten(get_layer_weight(self.model_dict[model_name], layer_name).data.clone())
                                 v_i_prime = (1 - goal_conc) * single_layer + goal_conc * mean_t
-                                # normalization
                                 v_i_prime = v_i_prime / torch.norm(v_i_prime) * torch.norm(mean_t)
                                 v_i_prime = v_i_prime.view(shape)
 
-                                get_layer_weight(self.model_dict[model_name], layer_name).data = \
-                                    get_layer_weight(self.model_dict_before[model_name], layer_name).clone() \
+                                get_layer_weight(self.model_dict[model_name], layer_name).data = (
+                                    get_layer_weight(self.model_dict_before[model_name], layer_name).clone()
                                     - attack_magnitude * v_i_prime
-                elif rl_mode == "zeros":
-                    for model_name in self.model_dict.keys():
-                        if int(model_name[5:]) in self.malicious_names:
-                            for layer_name, param in self.main_model.state_dict().items():
-                                layer_size = get_layer_weight(self.model_dict[model_name], layer_name).data.size()
-                                get_layer_weight(self.model_dict[model_name], layer_name).data = torch.zeros(
-                                    layer_size).to(
-                                    self.cuda_device)
-                else:
-                    warnings.warn(f"Can not recognize this rl_mode {rl_mode}")
+                                )
 
+                elif rl_mode == "zeros":
+                    for model_name in target_keys:
+                        for layer_name, _ in self.main_model.state_dict().items():
+                            layer_size = get_layer_weight(self.model_dict[model_name], layer_name).data.size()
+                            get_layer_weight(self.model_dict[model_name], layer_name).data = torch.zeros(layer_size).to(self.cuda_device)
+                else:
+                    raise ValueError(f"Unrecognized rl_mode: {rl_mode}")
+
+            else:
+                raise ValueError(f"Unrecognized attack_method: {self.attack_method}")
         return None
+
 
     def malicious_goals_on_goal_conc(self, goal_conc):
         g_main = self.g_main
@@ -934,36 +927,61 @@ class Helper:
     # Data Loading and Processing Functions
     def load_data(self):
         transform_vanilla = transforms.Compose([transforms.ToTensor(), ])
+
+        # ---------- CHANGE: add CIFAR normalizations ----------
+        transform_cifar10 = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465),
+                                (0.2470, 0.2435, 0.2616)),
+        ])
+        transform_cifar100 = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5071, 0.4867, 0.4408),
+                                (0.2675, 0.2565, 0.2761)),
+        ])
+        # ------------------------------------------------------
+
         if self.params['type'] == 'mnist':
             self.train_dataset = datasets.MNIST('./data', train=True, download=True, transform=transform_vanilla)
-            self.test_dataset = datasets.MNIST('./data', train=False, transform=transform_vanilla)
+            self.test_dataset  = datasets.MNIST('./data', train=False, transform=transform_vanilla)
+
         elif self.params['type'] == 'cifar10':
-            self.train_dataset = datasets.CIFAR10('./data', train=True, download=True, transform=transform_vanilla)
-            self.test_dataset = datasets.CIFAR10('./data', train=False, transform=transform_vanilla)
+            # ---------- CHANGE: use transform_cifar10 ----------
+            self.train_dataset = datasets.CIFAR10('./data', train=True,  download=True, transform=transform_cifar10)
+            self.test_dataset  = datasets.CIFAR10('./data', train=False, transform=transform_cifar10)
+            # ---------------------------------------------------
+
         elif self.params['type'] == 'fashion_mnist':
             self.train_dataset = datasets.FashionMNIST('./data', train=True, download=True, transform=transform_vanilla)
-            self.test_dataset = datasets.FashionMNIST('./data', train=False, transform=transform_vanilla)
+            self.test_dataset  = datasets.FashionMNIST('./data', train=False, transform=transform_vanilla)
+
         elif self.params['type'] == 'emnist':
-            self.train_dataset = datasets.EMNIST('./data', train=True, download=True, transform=transform_vanilla,
-                                                 split="letters")
-            self.test_dataset = datasets.EMNIST('./data', train=False, transform=transform_vanilla, split="letters")
+            self.train_dataset = datasets.EMNIST('./data', train=True,  download=True, transform=transform_vanilla, split="letters")
+            self.test_dataset  = datasets.EMNIST('./data', train=False, transform=transform_vanilla, split="letters")
+
         elif self.params['type'] == 'kmnist':
             self.train_dataset = datasets.KMNIST('./data', train=True, download=True, transform=transform_vanilla)
-            self.test_dataset = datasets.KMNIST('./data', train=False, transform=transform_vanilla)
+            self.test_dataset  = datasets.KMNIST('./data', train=False, transform=transform_vanilla)
+
         elif self.params['type'] == 'cifar100':
-            self.train_dataset = datasets.CIFAR100('./data', train=True, download=True, transform=transform_vanilla)
-            self.test_dataset = datasets.CIFAR100('./data', train=False, transform=transform_vanilla)
+            # ---------- CHANGE: use transform_cifar100 ----------
+            self.train_dataset = datasets.CIFAR100('./data', train=True,  download=True, transform=transform_cifar100)
+            self.test_dataset  = datasets.CIFAR100('./data', train=False, transform=transform_cifar100)
+            # ----------------------------------------------------
+
         elif self.params['type'] == 'imagenette':
             transform = transforms.Compose([
-                    transforms.CenterCrop(160),
-                    transforms.Resize(32),
-                    transforms.ToTensor(),
-                    transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-                ])
+                transforms.CenterCrop(160),
+                transforms.Resize(32),
+                transforms.ToTensor(),
+                transforms.Normalize((0.485, 0.456, 0.406),
+                                    (0.229, 0.224, 0.225)),
+            ])
             # Please add downloaded file to "./data/"
             # https://s3.amazonaws.com/fast-ai-imageclas/imagenette2-160.tgz
             self.train_dataset = datasets.ImageFolder("./data/imagenette2-160/train", transform)
-            self.test_dataset = datasets.ImageFolder("./data/imagenette2-160/val", transform)
+            self.test_dataset  = datasets.ImageFolder("./data/imagenette2-160/val", transform)
+
         else:
             warnings.warn("Data type not recognized in load_data")
 
@@ -2071,102 +2089,37 @@ class Helper:
         return weight_accumulator
 
 
-    # def krum_get_weight_accumulator(self, model_dict, krum_m):
-    #     with torch.no_grad():
-    #         model_sample_weight_dict = self.sampling_weight_layer(model_dict, self.sampling_layer)
-    #         muti_krum_m, krum_clients, client_weights = krum(
-    #             model_sample_weight_dict,
-    #             int(self.params['krum_f']),
-    #             int(krum_m)
-    #         )
-
-    #         malicious_weight_sel = self.malicious_weight_percentage(client_weights, self.malicious_names)
-    #         ordered_client_w_values = self.ordered_client_weight_values(client_weights)
-    #         self.weights_csv_logger.append_csv(ordered_client_w_values + [malicious_weight_sel])
-
-    #         krum_clients = list(map(lambda i: int(i[5:]), krum_clients))
-    #         logger_line = []
-
-    #         logger_clients = unique(self.malicious_sample + self.honest_sample + krum_clients)
-    #         for i in logger_clients:
-    #             if i in self.malicious_names:
-    #                 key = "model" + str(i) + "_M"
-    #                 pair = "{}: {:.1f}".format(key, client_weights["model" + str(i)])
-    #                 logger_line.append(pair)
-    #             else:
-    #                 key = "model" + str(i)
-    #                 pair = "{}: {:.1f}".format(key, client_weights[key])
-    #                 logger_line.append(pair)
-
-    #         mistakes = [i for i in krum_clients if i in self.malicious_names]
-
-    #         if len(mistakes) > 0:
-    #             logger.info(f"mistakenly chosen: {mistakes}")
-    #         logger.info(f"krum score: {logger_line}")
-    #     weight_accumulator = self.weighted_average(model_dict, client_weights)
-    #     return weight_accumulator
-
     def krum_get_weight_accumulator(self, model_dict, krum_m):
         with torch.no_grad():
             model_sample_weight_dict = self.sampling_weight_layer(model_dict, self.sampling_layer)
-            muti_krum_m, krum_clients, client_weights = krum(
+
+            # Returns: m_used, krum_clients, client_weights, client_scores
+            m_used, krum_clients, client_weights, client_scores = krum(
                 model_sample_weight_dict,
                 int(self.params['krum_f']),
                 int(krum_m)
             )
 
-            malicious_weight_sel = self.malicious_weight_percentage(client_weights, self.malicious_names)
-            ordered_client_w_values = self.ordered_client_weight_values(client_weights)
-            self.weights_csv_logger.append_csv(ordered_client_w_values + [malicious_weight_sel])
-
-            # --- helpers (no exceptions, deterministic normalization) ---
-            def base_name(name: str) -> str:
-                # "model15_M" -> "model15"; "model15" -> "model15"
-                return name.split("_", 1)[0]
-
-            def id_from_name(name: str) -> int:
-                b = base_name(name)
-                assert b.startswith("model"), f"unexpected key format: {name}"
-                return int(b[5:])
-
-            # ids for krum-selected clients (from their names)
-            krum_ids = [id_from_name(nm) for nm in krum_clients]
-
-            # normalize your sets to ints
-            mal_ids = [int(x) for x in self.malicious_names]
-            hon_ids = [int(x) for x in self.honest_sample]
-
-            # Build a map of ACTIVE ids -> actual key in client_weights
-            present_map = {}
-            for k in client_weights.keys():
-                bid = id_from_name(k)
-                # if duplicate ids with different suffixes appear, last write wins; OK for logging
-                present_map[bid] = k
-
-            # Only log clients that are actually present this round
-            # (intersection with present ids)
-            seen = set()
-            logger_ids_all = mal_ids + hon_ids + krum_ids
-            logger_ids = []
-            for cid in logger_ids_all:
-                if cid in present_map and cid not in seen:
-                    seen.add(cid)
-                    logger_ids.append(cid)
-
-            # Build log lines using actual keys; '_M' is cosmetic only
-            logger_line = []
-            for cid in logger_ids:
-                key_real = present_map[cid]            # actual dict key present this round
-                w = client_weights[key_real]
-                label = f"model{cid}{'_M' if cid in mal_ids else ''}"
-                logger_line.append(f"{label}: {w:.1f}")
-
-            # "mistakenly chosen": KRUM-chosen AND malicious (both by id)
-            mistakes = [cid for cid in krum_ids if cid in mal_ids]
-            if len(mistakes) > 0:
-                logger.info(f"mistakenly chosen: {mistakes}")
+            # --- log scores (lower is better) ---
+            logger_line = [f"{nm}: {score:.1f}" for nm, score in client_scores.items()]
             logger.info(f"krum score: {logger_line}")
 
+            # NEW: log which clients were chosen
+            logger.info(f"krum selected: {krum_clients}")
+
+            # warn if malicious chosen
+            mistakes = [nm for nm in krum_clients if any(str(mid) in nm for mid in self.malicious_names)]
+            if mistakes:
+                logger.info(f"mistakenly chosen: {mistakes}")
+
+            # Optional: log mixing weights
+            if hasattr(self, "ordered_client_weight_values"):
+                ordered = self.ordered_client_weight_values(client_weights)
+                mal_sel = self.malicious_weight_percentage(client_weights, self.malicious_names)
+                if hasattr(self, "weights_csv_logger"):
+                    self.weights_csv_logger.append_csv(ordered + [mal_sel])
+
+        # Mix with weights returned from krum()
         weight_accumulator = self.weighted_average(model_dict, client_weights)
         return weight_accumulator
 
@@ -2229,6 +2182,11 @@ class Helper:
             weight_accumulator = self.get_aggregated_weights(pre_agg_model_dict, self.aggregation_method)
         else:
             weight_accumulator = self.get_aggregated_weights(model_dict, self.aggregation_method)
+
+        # ---- NEW: BN buffer detection (do NOT aggregate these) ----
+        bn_buffer_suffixes = ("running_mean", "running_var", "num_batches_tracked")
+        def is_bn_buffer(key: str) -> bool:
+            return key.endswith(bn_buffer_suffixes)
 
         with torch.no_grad():
             # Use FedAvg semantics by default unless you explicitly want momentum-like blending
@@ -2334,6 +2292,17 @@ class Helper:
         if self.selection_mode == "random":
             # Uniform draw from all clients
             return self._rng.choice(N, size=k, replace=False).tolist()
+
+        if self.selection_mode == "fixed_mali_subset":
+            # Take the first k malicious clients (or all if fewer)
+            m_target = min(len(self.malicious_names), k)
+            fixed_mali = sorted(self.malicious_names)[:m_target]
+
+            # Fill the rest with random benigns
+            b_target = k - m_target
+            benign_pool = [i for i in range(N) if i not in self.malicious_names]
+            chosen_benign = self._rng.choice(benign_pool, size=b_target, replace=False).tolist() if b_target > 0 else []
+            return fixed_mali + chosen_benign
 
         # fixed_pct: enforce a fixed malicious ratio among the selected set
         mal_ids = sorted(self.malicious_ids)

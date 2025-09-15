@@ -13,7 +13,7 @@ early_stopping_min_delta: 0.0
 numEpoch: 2 # 10
 batch_size: 32
 momentum: 0.9
-server_lr_fix: True
+server_lr_fix: False
 server_lr: 0.5 # 0.5, 0.05
 server_lr_decay: 'NA'
 server_lr_floor: 'NA'

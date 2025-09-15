@@ -13,7 +13,7 @@ early_stopping_min_delta: 0.0
 numEpoch: 2 # 10
 batch_size: 32
 momentum: 0.9
-server_lr_fix: True
+server_lr_fix: False
 server_lr: 0.5 # 0.05
 server_lr_decay: 'NA'
 server_lr_floor: 'NA'
@@ -56,7 +56,8 @@ number_of_malicious_s: [30]
 # baseline: 'little', 'explicit boosting', 'min-max', 'min-sum', 'RL', 'None'
 # attack_method: 'RL'
 attack_method_s: ['RL', 'None', 'little', 'explicit boosting', 'min-max', 'min-sum', 'RL']
-
+Median_att: false
+White_box: false
 
 # RL based Malicious Attack
 rl_mode: "reverse_grad"
