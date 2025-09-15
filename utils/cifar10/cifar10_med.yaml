@@ -56,6 +56,8 @@ number_of_malicious_s: [30]
 # malicious_modes: 'untargeted2' # 'untargeted1', 'untargeted2', 'label_flipping', 'backdoor'
 # attack_method: 'RL'
 attack_method_s: ['None', 'RL', 'little', 'explicit boosting', 'min-max', 'min-sum', 'RL']
+Median_att: false
+White_box: false
 
 # RL based Malicious Attack
 rl_based_attack: True
