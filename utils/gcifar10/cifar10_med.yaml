@@ -5,7 +5,7 @@ type: cifar10
 number_of_clients: 100
 select_precentage: 10
 selection_mode: fixed_pct
-learning_rate: 0.005 # 0.01, 0.05
+learning_rate: 0.01 # 0.01, 0.05
 iterations: 300 #10, 24
 early_stopping: False
 early_stopping_tolerance: 3
@@ -19,7 +19,7 @@ server_lr_decay: 'NA'
 server_lr_floor: 'NA'
 if_noniid_s: [True] # [False, True]
 # dirichlet_alpha
-dirichlet_alpha_s: [1.0] 
+dirichlet_alpha_s: [0.1] 
 num_classes: 10
 train_amount: 50000
 random_seed: 0
@@ -37,7 +37,7 @@ available_layers: ['features.12.expand3x3.weight', 'features.12.expand1x1.weight
 #aggregation_method_s: ['geom_median', 'single-krum', 'coordinate_wise_median']
 #pre_aggr_method_s: ['NNM', 'bucketing', 'None']
 
-aggregation_method_s: ['contra']
+aggregation_method_s: ['coordinate_wise_median']
 pre_aggr_method_s: ['None']
 
 krum_f: 4 # < 40/2 - 1

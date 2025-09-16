@@ -29,6 +29,7 @@ from models.kmnist_12l import Kmnist_12L
 from models.cifar100_mobilenetv2 import mobilenetv2
 from models.cifar100_mobilenet import mobilenet
 from models.cifar100_resnet import resnet18
+from models.mobilenetv2_cifar import MobileNetV2_CIFAR
 
 from csv_logging import Csv_logging
 from distance_matrix import Distance
