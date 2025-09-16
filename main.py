@@ -1,5 +1,11 @@
-from helper import Helper
 import os
+os.environ["MPLBACKEND"] = "Agg"   # must be set before pyplot is imported
+import matplotlib
+matplotlib.use("Agg")              # double assurance
+import matplotlib.pyplot as plt
+plt.ioff()                         # no interactive windows
+
+from helper import Helper
 import yaml
 import datetime
 import argparse
@@ -80,13 +86,14 @@ def exp_w_plotting(current_time, series_time, params_loaded, cuda_device):
                 elif helper.search_dimension == 2:
                     plot_node_w_order_1d(helper.folder_path, helper.neldermead.history)
     logger.info(f'plotting done')
-
-    # Converting global_results plots to video
-    if helper.params['create_video']:
-        image_path = os.path.join(helper.folder_path, 'global_results')
-        video_name = helper.params['weights_layer'] + '_' + helper.params['distance_matrix']
-        images_to_video(image_path, helper.folder_path, 6, ".png", video_name, ".mp4")
-        logger.info(f'video output done')
+    plt.close('all') 
+    
+    # Converting global_results plots to video, temp disabled
+    # if helper.params['create_video']:
+    #     image_path = os.path.join(helper.folder_path, 'global_results')
+    #     video_name = helper.params['weights_layer'] + '_' + helper.params['distance_matrix']
+    #     images_to_video(image_path, helper.folder_path, 6, ".png", video_name, ".mp4")
+    #     logger.info(f'video output done')
 
     return test_accuracy_records[-1], test_loss_records[-1], attack_success_rate_records[-1], helper, dominate_strategy
 

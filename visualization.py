@@ -6,7 +6,7 @@ from matplotlib.ticker import MaxNLocator
 from adjustText import adjust_text
 from datetime import datetime
 from datetime import date
-from moviepy.editor import *
+# from moviepy.editor import *
 import moviepy.video.io.ImageSequenceClip
 import math
 

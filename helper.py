@@ -55,8 +55,6 @@ if not logger.handlers:   # guard so we don't add multiple handlers
     logger.addHandler(h)
     logger.setLevel(logging.INFO)
 
-
-
 class Helper:
     def __init__(self, current_time, series_time, params, name, cuda_device):
         self.pre_aggregation_method = None
@@ -130,24 +128,29 @@ class Helper:
 
         # Malicious pool (assumes you already create it; else fall back to params)
         if hasattr(self, "malicious_ids"):
-            self.malicious_ids = set(self.malicious_ids)
+            self.malicious_ids = set(int(x) for x in self.malicious_ids)
         else:
-            # fallback from params if needed
-            nm = 0
             if "number_of_malicious" in self.params:
                 nm = int(self.params["number_of_malicious"])
             elif "number_of_malicious_s" in self.params and isinstance(self.params["number_of_malicious_s"], list):
-                nm = int(self.params["number_of_malicious_s"][0])
+                # interpret as percentage, e.g. [30] -> 30%
+                perc = float(self.params["number_of_malicious_s"][0]) / self.params["number_of_clients"]
+                nm = int(round(self.num_clients * perc))
+            else:
+                nm = 0
             nm = max(0, min(self.num_clients, nm))
-            self.malicious_ids = set(np.random.default_rng(self.params.get("random_seed", None))
-                                    .choice(self.num_clients, size=nm, replace=False).tolist())
-
-        self.malicious_ids = set(int(x) for x in self.malicious_ids)
-        self.malicious_names = sorted(self.malicious_ids)
+            # deterministic: malicious are lowest IDs 0..nm-1
+            self.malicious_ids = set(range(nm))
 
         # Fixed percentage for malicious share (used only when selection_mode == "fixed_pct")
-        self.malicious_selection_ratio = float(self.params.get("malicious_selection_ratio", 0.3))
-
+        ratio = self.params.get("malicious_selection_ratio", None)
+        if ratio is None:
+            # number_of_malicious_s given in percent form, e.g., [30] -> 0.30
+            if "number_of_malicious_s" in self.params and isinstance(self.params["number_of_malicious_s"], list):
+                ratio = float(self.params["number_of_malicious_s"][0]) / self.params["number_of_clients"]
+            else:
+                ratio = 0.3  # fallback default
+        self.malicious_selection_ratio = max(0.0, min(1.0, float(ratio)))
         # RNG
         self._rng = np.random.default_rng(self.params.get("random_seed", None))
 
@@ -484,6 +487,8 @@ class Helper:
 
         # Minimal, 2-mode selection
         idx_clients = self.sample_clients_for_round()
+        idx_clients_int = [int(i) for i in idx_clients] 
+        logger.info(f"selected clients: {idx_clients_int} (total {len(idx_clients_int)})")
         self.last_selected_client_ids = [int(i) for i in idx_clients]
 
         # build the subset from the normalized ids
@@ -2293,30 +2298,38 @@ class Helper:
             # Uniform draw from all clients
             return self._rng.choice(N, size=k, replace=False).tolist()
 
-        if self.selection_mode == "fixed_mali_subset":
-            # Take the first k malicious clients (or all if fewer)
-            m_target = min(len(self.malicious_names), k)
-            fixed_mali = sorted(self.malicious_names)[:m_target]
+        if self.selection_mode == "fixed_pct":
+            # k to pick this round
+            N, k = self.num_clients, self.k_per_round
 
-            # Fill the rest with random benigns
+            # how many malicious to select this round
+            m_target = int(round(k * float(self.malicious_selection_ratio)))
+            m_target = max(0, min(k, m_target))  # clamp
             b_target = k - m_target
-            benign_pool = [i for i in range(N) if i not in self.malicious_names]
-            chosen_benign = self._rng.choice(benign_pool, size=b_target, replace=False).tolist() if b_target > 0 else []
-            return fixed_mali + chosen_benign
 
-        # fixed_pct: enforce a fixed malicious ratio among the selected set
-        mal_ids = sorted(self.malicious_ids)
-        ben_ids = [i for i in range(N) if i not in self.malicious_ids]
+            # ---- Malicious: always [0, 1, 2, ..., m_target-1] ----
+            fixed_mal_ids = list(range(m_target))
+            logger.info(f"fixed malicious IDs this round: {fixed_mal_ids}")
+            # logger.info(f"self.malicious_ids {self.malicious_ids}")
 
-        m_target = int(round(k * self.malicious_selection_ratio))
-        m_target = min(len(mal_ids), max(0, m_target))
-        b_target = max(0, k - m_target)
+            # (optional safety) ensure these are actually in your malicious pool
+            # comment this out if you already guarantee 0.. are malicious at init
+            assert all(mid in self.malicious_ids for mid in fixed_mal_ids), \
+                f"Fixed malicious IDs {fixed_mal_ids} must be in self.malicious_ids."
 
-        sel_m = self._rng.choice(mal_ids, size=m_target, replace=False).tolist() if m_target else []
-        sel_b = self._rng.choice(ben_ids, size=b_target, replace=False).tolist() if b_target else []
-        out = sel_m + sel_b
-        self._rng.shuffle(out)
-        return out
+            # ---- Benign: random draw each round ----
+            benign_pool = [i for i in range(N) if i not in self.malicious_ids]
+            if len(benign_pool) < b_target:
+                raise ValueError(f"Not enough benign clients: need {b_target}, have {len(benign_pool)}")
+
+            sel_b = self._rng.choice(benign_pool, size=b_target, replace=False).tolist() if b_target else []
+
+            # Do NOT shuffle so 0,1,2 (etc.) remain visible in logs
+            out = fixed_mal_ids + sel_b
+            return out
+
+        else: ValueError(f"Unknown selection mode: {self.selection_mode}")
+
 
     def log_once(self, key, msg):
         if key not in self._logged_once:
