@@ -5,7 +5,7 @@ type: mnist
 number_of_clients: 100
 select_precentage: 10
 selection_mode: fixed_pct
-learning_rate: 0.005 # 0.1, 0.05
+learning_rate: 0.001 # 0.1, 0.05
 iterations: 200 #40, 24
 early_stopping: False
 early_stopping_tolerance: 3
