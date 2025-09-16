@@ -142,15 +142,17 @@ class Helper:
             # deterministic: malicious are lowest IDs 0..nm-1
             self.malicious_ids = set(range(nm))
 
-        # Fixed percentage for malicious share (used only when selection_mode == "fixed_pct")
-        ratio = self.params.get("malicious_selection_ratio", None)
-        if ratio is None:
-            # number_of_malicious_s given in percent form, e.g., [30] -> 0.30
-            if "number_of_malicious_s" in self.params and isinstance(self.params["number_of_malicious_s"], list):
-                ratio = float(self.params["number_of_malicious_s"][0]) / self.params["number_of_clients"]
-            else:
-                ratio = 0.3  # fallback default
-        self.malicious_selection_ratio = max(0.0, min(1.0, float(ratio)))
+        # normalized forms used throughout the code
+        self.malicious_ids = set(int(x) for x in self.malicious_ids)
+        self.malicious_names = sorted(self.malicious_ids)
+
+        # set selection ratio default if not provided (used by fixed_pct)
+        if "malicious_selection_ratio" not in self.params:
+            # ratio of total malicious to total clients (global)
+            self.malicious_selection_ratio = len(self.malicious_ids) / float(self.num_clients) if self.num_clients > 0 else 0.0
+        else:
+            self.malicious_selection_ratio = float(self.params["malicious_selection_ratio"])
+        
         # RNG
         self._rng = np.random.default_rng(self.params.get("random_seed", None))
 
@@ -194,6 +196,31 @@ class Helper:
         self.name_of_y_train_sets = None
         self.main_model = None
 
+
+    def ensure_malicious_pool(self):
+        """Create deterministic malicious pool from YAML before sampling rounds."""
+        N = int(self.params["number_of_clients"])
+
+        if "number_of_malicious" in self.params:
+            nm = int(self.params["number_of_malicious"])
+        elif "number_of_malicious_s" in self.params and isinstance(self.params["number_of_malicious_s"], list):
+            perc = float(self.params["number_of_malicious_s"][0]) / 100.0
+            nm = int(round(N * perc))
+        else:
+            nm = 0
+
+        nm = max(0, min(N, nm))
+        # deterministic: 0..nm-1
+        self.malicious_ids = set(range(nm))
+        self.malicious_names = sorted(self.malicious_ids)
+        print( f"ensure_malicious_pool: {len(self.malicious_ids)} malicious out of {N} clients: {self.malicious_names}" )
+        # ratio used by fixed_pct
+        if "malicious_selection_ratio" in self.params:
+            self.malicious_selection_ratio = float(self.params["malicious_selection_ratio"])
+        else:
+            self.malicious_selection_ratio = (len(self.malicious_ids) / float(N)) if N > 0 else 0.0
+
+
     # Create the main model and initialization
     def fl_initialization(self):
         if self.cuda_device.type != 'cpu':
@@ -215,6 +242,9 @@ class Helper:
         self.name_of_criterions = list(self.criterion_dict.keys())
         self.model_dict = self.send_main_model_to_nodes_and_update_model_dict(self.main_model, self.model_dict)
         self.attack_method = self.params['attack_method']
+        
+        self.ensure_malicious_pool()  # create {0..nm-1} from YAML (e.g., 0..29 for 30%)
+        logger.info(f"GLOBAL malicious_ids ({len(self.malicious_ids)}): {sorted(self.malicious_ids)[:10]}...")
         self.malicious_names, self.malicious_dict, self.honest_names = self.get_malicious_name()
 
         if len(self.malicious_names) == 0:
@@ -753,64 +783,143 @@ class Helper:
             # asr_records.append(attack_success_rates)
         return loss_record, accuracy_record, attack_success_rate_dict, model_output_na
 
+    # def get_malicious_name(self):
+    #     # new self.malicious_name as a dictionary
+    #     malicious_dict = dict()
+    #     malicious_selected = np.random.choice(range(self.params['number_of_clients']), \
+    #                                           self.params['number_of_malicious'], replace=False)
+    #     malicious_selected.sort()
+    #     honest_selected = [i for i in list(range(self.params['number_of_clients'])) if i not in malicious_selected]
+    #     malicious_preprocessing = list(malicious_selected)
+
+    #     if self.attack_method in ['explicit boosting', 'traditional']:
+    #         malic_prop = self.params['malicious_proportion']
+
+    #         sum_prop = 0
+    #         for i in range(len(malic_prop)):
+    #             # ensure the num of malicious and the malic_prop % are match
+    #             assert (self.params['number_of_malicious'] * malic_prop[i][1]) % 1 <= 0.001, \
+    #                 "num of malicious * each malic_prop % has to be int"
+    #             sum_prop += malic_prop[i][1]
+    #             group_selected = np.random.choice(malicious_preprocessing, \
+    #                                               int(self.params['number_of_malicious'] * malic_prop[i][1]),
+    #                                               replace=False)
+
+    #             malicious_mode = malic_prop[i][0]
+    #             if malic_prop[i][0] in ['untargeted1', 'untargeted2']:
+    #                 # -1 due to untargeted
+    #                 from_label = -1
+    #                 to_label = -1
+    #             else:
+    #                 from_label = malic_prop[i][2]
+    #                 to_label = malic_prop[i][3]
+    #             malicious_dict[i] = [malicious_mode, list(group_selected), from_label, to_label]
+    #             malicious_preprocessing = [x for x in malicious_preprocessing if x not in group_selected]
+
+    #         assert sum_prop - 1 <= 0.001, "malic_prop % have to sum to 1"
+    #     elif self.attack_method == 'little':
+    #         malicious_mode = 'None'
+    #         goal = [-1, -1]
+    #         malicious_dict[0] = [malicious_mode, malicious_preprocessing, goal]
+    #     elif self.attack_method == 'UAM':
+    #         malicious_mode = 'None'
+
+    #         if self.params['Goal'] == 'untargeted':
+    #             malicious_mode = 'untargeted'
+    #             to_map = list(range(self.num_classes))
+    #             goal = create_mismatch_mapping(to_map)
+    #         elif self.params['Goal'] == 'random_pair':
+    #             [from_label, to_label] = np.random.choice(self.params['num_classes'], 2, replace=False)
+    #             goal = [[from_label, to_label], [to_label, from_label]]
+    #             malicious_mode = 'label_flipping'
+    #         elif type(self.params['Goal']) == list:
+    #             malicious_mode = 'label_flipping'
+    #             goal = self.params['Goal']
+    #         else:
+    #             warnings.warn('Unknown attack_method!')
+    #         malicious_dict[0] = [malicious_mode, malicious_preprocessing, goal]
+    #         # logger.info("helper.get_malicious_name debugging 4: malicious_dict created")
+    #         print("malicious_dict", malicious_dict)
+    #     return list(malicious_selected), malicious_dict, honest_selected
+
+
     def get_malicious_name(self):
-        # new self.malicious_name as a dictionary
-        malicious_dict = dict()
-        malicious_selected = np.random.choice(range(self.params['number_of_clients']), \
-                                              self.params['number_of_malicious'], replace=False)
-        malicious_selected.sort()
-        honest_selected = [i for i in list(range(self.params['number_of_clients'])) if i not in malicious_selected]
+        # Allow zero-malicious case – no assert here.
+        N = int(self.params['number_of_clients'])
+
+        # Use the pool created by ensure_malicious_pool()
+        malicious_selected = sorted(int(x) for x in getattr(self, "malicious_ids", set()))
+        honest_selected = [i for i in range(N) if i not in malicious_selected]
         malicious_preprocessing = list(malicious_selected)
 
+        malicious_dict = {}
+
+        # --- If no malicious clients, short-circuit cleanly ---
+        if len(malicious_selected) == 0:
+            # No groups; everything is benign
+            # For 'little'/'UAM' or others, returning an empty malicious group list is fine.
+            return [], malicious_dict, honest_selected
+
+        # --- From here on, we have >=1 malicious ---
         if self.attack_method in ['explicit boosting', 'traditional']:
             malic_prop = self.params['malicious_proportion']
+            m_total = len(malicious_selected)
+            sum_prop = 0.0
+            rng = np.random.default_rng(self.params.get("random_seed", None))
 
-            sum_prop = 0
-            for i in range(len(malic_prop)):
-                # ensure the num of malicious and the malic_prop % are match
-                assert (self.params['number_of_malicious'] * malic_prop[i][1]) % 1 <= 0.001, \
+            for i, spec in enumerate(malic_prop):
+                mode = spec[0]
+                p = float(spec[1])
+                # ensure integer split
+                assert abs(m_total * p - round(m_total * p)) <= 1e-3, \
                     "num of malicious * each malic_prop % has to be int"
-                sum_prop += malic_prop[i][1]
-                group_selected = np.random.choice(malicious_preprocessing, \
-                                                  int(self.params['number_of_malicious'] * malic_prop[i][1]),
-                                                  replace=False)
+                sum_prop += p
 
-                malicious_mode = malic_prop[i][0]
-                if malic_prop[i][0] in ['untargeted1', 'untargeted2']:
-                    # -1 due to untargeted
-                    from_label = -1
-                    to_label = -1
+                take = int(round(m_total * p))
+                group_selected = rng.choice(malicious_preprocessing, size=take, replace=False).tolist()
+
+                if mode in ['untargeted1', 'untargeted2']:
+                    from_label, to_label = -1, -1
                 else:
-                    from_label = malic_prop[i][2]
-                    to_label = malic_prop[i][3]
-                malicious_dict[i] = [malicious_mode, list(group_selected), from_label, to_label]
+                    from_label, to_label = int(spec[2]), int(spec[3])
+
+                malicious_dict[i] = [mode, list(group_selected), from_label, to_label]
+                # remove chosen from pool for next groups
                 malicious_preprocessing = [x for x in malicious_preprocessing if x not in group_selected]
 
-            assert sum_prop - 1 <= 0.001, "malic_prop % have to sum to 1"
+            assert abs(sum_prop - 1.0) <= 1e-3, "malic_prop % have to sum to 1"
+
         elif self.attack_method == 'little':
             malicious_mode = 'None'
             goal = [-1, -1]
             malicious_dict[0] = [malicious_mode, malicious_preprocessing, goal]
+
         elif self.attack_method == 'UAM':
             malicious_mode = 'None'
-
             if self.params['Goal'] == 'untargeted':
                 malicious_mode = 'untargeted'
                 to_map = list(range(self.num_classes))
                 goal = create_mismatch_mapping(to_map)
             elif self.params['Goal'] == 'random_pair':
-                [from_label, to_label] = np.random.choice(self.params['num_classes'], 2, replace=False)
-                goal = [[from_label, to_label], [to_label, from_label]]
+                rng = np.random.default_rng(self.params.get("random_seed", None))
+                from_label, to_label = rng.choice(self.params['num_classes'], 2, replace=False)
+                goal = [[int(from_label), int(to_label)], [int(to_label), int(from_label)]]
                 malicious_mode = 'label_flipping'
-            elif type(self.params['Goal']) == list:
+            elif isinstance(self.params['Goal'], list):
                 malicious_mode = 'label_flipping'
                 goal = self.params['Goal']
             else:
                 warnings.warn('Unknown attack_method!')
+                goal = [-1, -1]
             malicious_dict[0] = [malicious_mode, malicious_preprocessing, goal]
-            # logger.info("helper.get_malicious_name debugging 4: malicious_dict created")
-            print("malicious_dict", malicious_dict)
+            print("malicious_dict", malicious_dict)  # keep or remove as you like
+
+        else:
+            # default: one group with all malicious
+            malicious_dict[0] = ['None', malicious_preprocessing, [-1, -1]]
+
         return list(malicious_selected), malicious_dict, honest_selected
+
 
     def create_rl_malicious_datasets(self, x_train_dict, y_train_dict, malicious_names, g_locals):
         x_train_m_dict = {}
