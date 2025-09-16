@@ -413,7 +413,8 @@ class Helper:
                                 self.neldermead.init_spot_search = False
 
                             else:
-                                if self.neldermead.reach_restart_threshold(self.rounds_before_restart):
+                                if self.neldermead.reach_restart_threshold(self.rounds_before_restart,
+                                                                           eps=0.01):
                                     new_start = None
                                     if self.rl_mode == "untargeted_label_flip":
                                         new_start = gen_random_from_domain(

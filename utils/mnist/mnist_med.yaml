@@ -1,6 +1,6 @@
 ---
 if_series: True
-cuda_device: 3
+cuda_device: 5
 type: mnist
 number_of_clients: 100
 select_precentage: 10
@@ -66,7 +66,7 @@ step: 1.0
 sigmoid_c1: 0.7
 effective_action_domain: [[-4, 4]] # [[-4, 4], [-5, 2]]
 empirical_points: [[-4.0], [0.0], [4.0]] # empty list means not consider empirical_points
-rounds_before_restart: 5
+rounds_before_restart: 3
 rl_manual: False
 manual_coordinates: [-1.0]
 action_conv_func: "0-10" # "0-8"

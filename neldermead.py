@@ -275,29 +275,42 @@ class NelderMead:
         Here 'improvement' means the reward (current - previous accuracy) is < -eps.
         """
         if len(self.history) < 2:
+            logger.info(f"[NM] restart? history_len={len(self.history)} < 2 → False")
             return False
 
         last_reward = self.history[-1][2]
         if last_reward is None:
+            logger.info("[NM] restart? last_reward=None → False")
             return False
 
-        # Improvement (accuracy dropped) -> negative reward
+        # before update
+        logger.info(f"[NM] restart? last_reward={last_reward:.6f}, eps={eps}, "
+                    f"rounds_no_improv(before)={self.rounds_no_improv}, threshold={threshold}")
+
         if last_reward < -eps:
-            # we improved; reset the counter
+            # improved
             self.rounds_no_improv = 0
+            logger.info(f"[NM] improvement detected (last_reward < -eps). "
+                        f"rounds_no_improv(reset)={self.rounds_no_improv}")
         else:
-            # no meaningful improvement (flat or accuracy rose)
+            # no meaningful improvement
             self.rounds_no_improv += 1
+            logger.info(f"[NM] no-improv (last_reward >= -eps). "
+                        f"rounds_no_improv(after)={self.rounds_no_improv}/{threshold}")
 
         if self.rounds_no_improv >= threshold:
             self.rounds_no_improv = 0
-            logger.info(f"RL search restart at {len(self.history)} rounds")
+            logger.info(f"[NM] RL search restart at history_len={len(self.history)} "
+                        f"(hit threshold); rounds_no_improv reset to 0")
             return True
 
         return False
 
 
+
     def restart(self, new_start):
+        logger.info(f"[NM] restart(): new_start={new_start}, "
+                    f"prev_mode={self.mode}, prev_iters={self.iters}")
         self.triangle = generate_init_triangle(self.x_start, new_start, self.step)
         self.mode = 'initial'
         self.reduction_loop_i = 0
