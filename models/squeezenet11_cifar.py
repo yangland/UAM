@@ -31,7 +31,7 @@ class SqueezeNet11_CIFAR(nn.Module):
         self.name = "SqueezeNet11_CIFAR"
         m = squeezenet1_1(weights=None)
         # stem conv to match channels and keep stride=1 for 32x32
-        m.features[0] = nn.Conv2d(in_ch, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        m.features[0] = nn.Conv2d(in_ch, 64, kernel_size=3, stride=1, padding=1, bias=True)
         # remove the FIRST MaxPool2d (v1.1: index 2)
         for i, layer in enumerate(m.features):
             if isinstance(layer, nn.MaxPool2d):

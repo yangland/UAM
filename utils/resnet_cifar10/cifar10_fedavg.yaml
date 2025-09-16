@@ -1,43 +1,43 @@
 ---
 if_series: True
-cuda_device: 2
+cuda_device: 6
 type: cifar10
 number_of_clients: 100
 select_precentage: 10
 selection_mode: fixed_pct
-learning_rate: 0.01 # 0.01, 0.05
+learning_rate: 0.05 # 0.01, 0.05
 iterations: 300 #10, 24
 early_stopping: False
 early_stopping_tolerance: 3
 early_stopping_min_delta: 0.0
 numEpoch: 2 # 10
-batch_size: 32
+batch_size: 64
 momentum: 0.9
 server_lr_fix: False
-server_lr: 0.5 # 0.5, 0.05
+server_lr: 1.0 # 0.5, 0.05
 server_lr_decay: 'NA'
 server_lr_floor: 'NA'
 if_noniid_s: [True] # [False, True]
 # dirichlet_alpha
-dirichlet_alpha_s: [0.1] 
+dirichlet_alpha_s: [1.0, 0.1] 
 num_classes: 10
 train_amount: 50000
 random_seed: 0
-nn_model:  SqueezeNet11_CIFAR
+nn_model:  ResNet20_CIFAR
 class_names: ['plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
 
 # Model integrity check
 check_integrity: False
 
 # Aggregation Methods
-sampling_layer: 'features.12.expand3x3.weight'
-available_layers: ['features.12.expand3x3.weight', 'features.12.expand1x1.weight']
+sampling_layer: 'layer3.2.conv1.weight'
+available_layers: ['layer3.2.conv1.weight', 'layer3.2.conv2.weight']
 # allowed values are: ['fedavg', 'geom_median', 'foolsgold', 'contra', 'single-krum', 'coordinate_wise_median', 'trimmed_mean', 'bulyan']
 
 #aggregation_method_s: ['geom_median', 'single-krum', 'coordinate_wise_median']
 #pre_aggr_method_s: ['NNM', 'bucketing', 'None']
 
-aggregation_method_s: ['geom_median']
+aggregation_method_s: ['fedavg']
 pre_aggr_method_s: ['None']
 
 krum_f: 4 # < 40/2 - 1
@@ -97,7 +97,7 @@ malicious_proportion: [['untargeted', 1, -1, -1]]
 # malicious_group_agg: True # if there is an Averaging between clients of one malicious group
 
 # Visualization
-weights_layer: 'features.12.expand1x1.weight' # fc_layer.3.weight
+weights_layer: 'layer3.2.conv1.weight' # fc_layer.3.weight
 distance_matrix: 'cos' # 'cos', 'l2', 'cka'
 plot_individual: False
 plot_global: False

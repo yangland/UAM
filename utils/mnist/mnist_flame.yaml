@@ -2,8 +2,8 @@
 if_series: True
 cuda_device: 4
 type: mnist
-number_of_clients: 20
-select_precentage: 100
+number_of_clients: 100
+select_precentage: 10
 selection_mode: fixed_mali_subset
 learning_rate: 0.005 # 0.1, 0.05
 iterations: 200 #40, 24
@@ -14,7 +14,7 @@ numEpoch: 2 # 10
 batch_size: 32
 momentum: 0.9
 server_lr_fix: False
-server_lr: 0.5 # 0.05
+server_lr: 1.0 # 0.05
 server_lr_decay: 'NA'
 server_lr_floor: 'NA'
 if_noniid_s: [True]
@@ -49,7 +49,7 @@ trimmed_mean_m: 4
 bulyan_m: 4
 
 # Malicious Clients
-number_of_malicious_s: [5]
+number_of_malicious_s: [30]
 # untargeted1 y = existed y label + 1, 1->2, ... , 9 -> 1
 # untargeted2 y = existed y label -> random label of all class with same probability
 # malicious_modes: 'untargeted2' # 'untargeted1', 'untargeted2', 'label_flipping', 'backdoor'

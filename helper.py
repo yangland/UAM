@@ -30,6 +30,7 @@ from models.cifar100_mobilenetv2 import mobilenetv2
 from models.cifar100_mobilenet import mobilenet
 from models.cifar100_resnet import resnet18
 from models.mobilenetv2_cifar import MobileNetV2_CIFAR
+from models.resnet20_cifar import ResNet20_CIFAR
 
 from csv_logging import Csv_logging
 from distance_matrix import Distance
@@ -1585,7 +1586,9 @@ class Helper:
 
             optimizer_name = "optimizer" + str(i)
             optimizer_info = torch.optim.SGD(model_info.parameters(),
-                                             lr=self.params['learning_rate'], momentum=self.params['momentum'])
+                                             lr=self.params['learning_rate'], 
+                                             momentum=self.params['momentum'],
+                                             weight_decay=5e-4,)
             optimizer_dict.update({optimizer_name: optimizer_info})
 
             criterion_name = "criterion" + str(i)
