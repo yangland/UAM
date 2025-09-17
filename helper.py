@@ -31,6 +31,8 @@ from models.cifar100_mobilenet import mobilenet
 from models.cifar100_resnet import resnet18
 from models.mobilenetv2_cifar import MobileNetV2_CIFAR
 from models.resnet20_cifar import ResNet20_CIFAR
+from models.small_cnn import SmallCNN_MNIST
+from models.tiny_cnn import TinyCNN_MNIST
 
 from csv_logging import Csv_logging
 from distance_matrix import Distance
@@ -2497,37 +2499,39 @@ class Helper:
     def sample_clients_for_round(self):
         N, k = self.num_clients, self.k_per_round
 
+        # Select everyone if k >= N
         if k >= N:
             return list(range(N))
 
-        # If not UAM, force random selection each round
-        if self.attack_method not in ["UAM"]:
-            return self._rng.choice(N, size=k, replace=False).tolist()
+        # Pools
+        mal_pool = sorted(int(x) for x in self.malicious_ids)          # deterministic pool (0..nm-1)
+        ben_pool = [i for i in range(N) if i not in self.malicious_ids]
 
-        # UAM path
-        if self.selection_mode == "random":
-            return self._rng.choice(N, size=k, replace=False).tolist()
+        # Target counts: same malicious fraction for UAM and baselines
+        ratio = float(self.malicious_selection_ratio)
+        ratio = max(0.0, min(1.0, ratio))
+        m_possible = len(mal_pool)
+        m_target = int(round(k * ratio))
+        m_target = max(0, min(m_target, m_possible, k))
+        b_target = k - m_target
 
-        if self.selection_mode == "fixed_pct":
-            # k to pick this round
-            m_target = int(round(k * float(self.malicious_selection_ratio)))
-            m_target = max(0, min(k, m_target))
-            b_target = k - m_target
+        if len(ben_pool) < b_target:
+            raise ValueError(f"Not enough benign clients: need {b_target}, have {len(ben_pool)}")
 
-            # ---- Malicious: fixed ids (0..m_target-1) only for UAM ----
-            fixed_mal_ids = list(range(m_target))
+        if self.attack_method == "UAM":
+            # Always the same malicious clients for UAM
+            fixed_mal_ids = mal_pool[:m_target]
+            sel_b = self._rng.choice(ben_pool, size=b_target, replace=False).tolist() if b_target else []
             logger.info(f"fixed malicious IDs this round: {fixed_mal_ids}")
-            assert all(mid in self.malicious_ids for mid in fixed_mal_ids)
-
-            # ---- Benign: random draw each round ----
-            benign_pool = [i for i in range(N) if i not in self.malicious_ids]
-            if len(benign_pool) < b_target:
-                raise ValueError(f"Not enough benign clients: need {b_target}, have {len(benign_pool)}")
-
-            sel_b = self._rng.choice(benign_pool, size=b_target, replace=False).tolist() if b_target else []
             return fixed_mal_ids + sel_b
 
-        raise ValueError(f"Unknown selection mode: {self.selection_mode}")
+        else:
+            # Baselines: random malicious + random benign, but same counts as UAM
+            sel_m = self._rng.choice(mal_pool, size=m_target, replace=False).tolist() if m_target else []
+            sel_b = self._rng.choice(ben_pool, size=b_target, replace=False).tolist() if b_target else []
+            logger.info(f"random malicious IDs this round: {sel_m}")
+            return sel_m + sel_b
+
 
     def log_once(self, key, msg):
         if key not in self._logged_once:

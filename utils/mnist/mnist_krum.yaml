@@ -1,6 +1,6 @@
 ---
 if_series: True
-cuda_device: 5
+cuda_device: 6
 type: mnist
 number_of_clients: 100
 select_precentage: 10
