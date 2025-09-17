@@ -590,25 +590,75 @@ class Helper:
                             mean[layer_name].float() + Z_max * std_dict[layer_name].float()
                         )
 
+            # elif self.attack_method in ['min-max', 'min-sum']:
+            #     # updates computed on all malicious, applied to selected malicious
+            #     n_attacker = 5
+            #     malicious_models = {k: self.model_dict[k] for k in mal_keys}
+            #     mean = self.get_aggregated_weights(malicious_models, 'fedavg')
+            #     mal_updates = {}
+            #     model_dict_after = get_weights_from_model_dict(self.model_dict)  # full snapshot for stacking
+            #     for layer_name, _ in self.main_model.state_dict().items():
+            #         layer_list = [get_layer_weight(model_dict_after[k], layer_name).clone() for k in mal_keys]
+            #         stacked = torch.stack(layer_list)
+            #         if self.attack_method == 'min-max':
+            #             mal_updates[layer_name] = our_attack_dist(stacked, mean[layer_name], n_attacker,
+            #                                                     self.cuda_device, dev_type='unit_vec')
+            #         else:
+            #             mal_updates[layer_name] = our_attack_score(stacked, mean[layer_name], n_attacker,
+            #                                                     self.cuda_device, dev_type='unit_vec')
+            #     for model_name in target_keys:
+            #         for layer_name, _ in self.main_model.state_dict().items():
+            #             get_layer_weight(self.model_dict[model_name], layer_name).data = mal_updates[layer_name]
+            
             elif self.attack_method in ['min-max', 'min-sum']:
-                # updates computed on all malicious, applied to selected malicious
-                n_attacker = 5
-                malicious_models = {k: self.model_dict[k] for k in mal_keys}
-                mean = self.get_aggregated_weights(malicious_models, 'fedavg')
-                mal_updates = {}
-                model_dict_after = get_weights_from_model_dict(self.model_dict)  # full snapshot for stacking
-                for layer_name, _ in self.main_model.state_dict().items():
-                    layer_list = [get_layer_weight(model_dict_after[k], layer_name).clone() for k in mal_keys]
-                    stacked = torch.stack(layer_list)
-                    if self.attack_method == 'min-max':
-                        mal_updates[layer_name] = our_attack_dist(stacked, mean[layer_name], n_attacker,
-                                                                self.cuda_device, dev_type='unit_vec')
+                # 1) Figure out who is selected this round
+                selected_ids = list(self.last_selected_client_ids)
+                sel_mal_ids  = [i for i in selected_ids if i in self.malicious_ids]
+                sel_ben_ids  = [i for i in selected_ids if i not in self.malicious_ids]
+
+                if len(sel_mal_ids) == 0:
+                    # nothing to do this round
+                    pass
+                else:
+                    n_attackers = len(sel_mal_ids)  # use the actual number selected
+                    model_dict_after = get_weights_from_model_dict(self.model_dict)
+
+                    # 2) Reference = FedAvg of selected benign (fallback to global benign if none selected)
+                    if len(sel_ben_ids) == 0:
+                        global_benign_ids = [i for i in range(self.num_clients) if i not in self.malicious_ids]
+                        benign_models = {f"model{i}": self.model_dict[f"model{i}"] for i in global_benign_ids}
+                        ben_ids_for_stack = global_benign_ids
                     else:
-                        mal_updates[layer_name] = our_attack_score(stacked, mean[layer_name], n_attacker,
-                                                                self.cuda_device, dev_type='unit_vec')
-                for model_name in target_keys:
+                        benign_models = {f"model{i}": self.model_dict[f"model{i}"] for i in sel_ben_ids}
+                        ben_ids_for_stack = sel_ben_ids
+
+                    ref_mean = self.get_aggregated_weights(benign_models, 'fedavg')
+
+                    # 3) Constraint set = selected benign updates (stacked)
+                    mal_updates = {}
                     for layer_name, _ in self.main_model.state_dict().items():
-                        get_layer_weight(self.model_dict[model_name], layer_name).data = mal_updates[layer_name]
+                        ben_layer_list = [
+                            get_layer_weight(model_dict_after[f"model{i}"], layer_name).clone()
+                            for i in ben_ids_for_stack
+                        ]
+                        stacked = torch.stack(ben_layer_list)  # [Nb, *]
+
+                        if self.attack_method == 'min-max':
+                            mal_updates[layer_name] = our_attack_dist(
+                                stacked, ref_mean[layer_name], n_attackers,
+                                self.cuda_device, dev_type='unit_vec'
+                            )
+                        else:
+                            mal_updates[layer_name] = our_attack_score(
+                                stacked, ref_mean[layer_name], n_attackers,
+                                self.cuda_device, dev_type='unit_vec'
+                            )
+
+                    # 4) Apply only to selected malicious clients
+                    for mid in sel_mal_ids:
+                        model_name = f"model{mid}"
+                        for layer_name, _ in self.main_model.state_dict().items():
+                            get_layer_weight(self.model_dict[model_name], layer_name).data = mal_updates[layer_name]
 
             elif self.attack_method == 'UAM':
                 if rl_mode == "untargeted_label_flip":
@@ -2401,35 +2451,73 @@ class Helper:
         return (resultTable)
     
     
+    # def sample_clients_for_round(self):
+    #     N, k = self.num_clients, self.k_per_round
+
+    #     # If selecting all, short-circuit (works for both modes)
+    #     if k >= N:
+    #         return list(range(N))
+
+    #     if self.selection_mode == "random":
+    #         # Uniform draw from all clients
+    #         return self._rng.choice(N, size=k, replace=False).tolist()
+
+    #     if self.selection_mode == "fixed_pct":
+    #         # k to pick this round
+    #         N, k = self.num_clients, self.k_per_round
+
+    #         # how many malicious to select this round
+    #         m_target = int(round(k * float(self.malicious_selection_ratio)))
+    #         m_target = max(0, min(k, m_target))  # clamp
+    #         b_target = k - m_target
+
+    #         # ---- Malicious: always [0, 1, 2, ..., m_target-1] ----
+    #         fixed_mal_ids = list(range(m_target))
+    #         logger.info(f"fixed malicious IDs this round: {fixed_mal_ids}")
+    #         # logger.info(f"self.malicious_ids {self.malicious_ids}")
+
+    #         # (optional safety) ensure these are actually in your malicious pool
+    #         # comment this out if you already guarantee 0.. are malicious at init
+    #         assert all(mid in self.malicious_ids for mid in fixed_mal_ids), \
+    #             f"Fixed malicious IDs {fixed_mal_ids} must be in self.malicious_ids."
+
+    #         # ---- Benign: random draw each round ----
+    #         benign_pool = [i for i in range(N) if i not in self.malicious_ids]
+    #         if len(benign_pool) < b_target:
+    #             raise ValueError(f"Not enough benign clients: need {b_target}, have {len(benign_pool)}")
+
+    #         sel_b = self._rng.choice(benign_pool, size=b_target, replace=False).tolist() if b_target else []
+
+    #         # Do NOT shuffle so 0,1,2 (etc.) remain visible in logs
+    #         out = fixed_mal_ids + sel_b
+    #         return out
+
+    #     else: ValueError(f"Unknown selection mode: {self.selection_mode}")
+
     def sample_clients_for_round(self):
         N, k = self.num_clients, self.k_per_round
 
-        # If selecting all, short-circuit (works for both modes)
         if k >= N:
             return list(range(N))
 
+        # If not UAM, force random selection each round
+        if self.attack_method not in ["UAM"]:
+            return self._rng.choice(N, size=k, replace=False).tolist()
+
+        # UAM path
         if self.selection_mode == "random":
-            # Uniform draw from all clients
             return self._rng.choice(N, size=k, replace=False).tolist()
 
         if self.selection_mode == "fixed_pct":
             # k to pick this round
-            N, k = self.num_clients, self.k_per_round
-
-            # how many malicious to select this round
             m_target = int(round(k * float(self.malicious_selection_ratio)))
-            m_target = max(0, min(k, m_target))  # clamp
+            m_target = max(0, min(k, m_target))
             b_target = k - m_target
 
-            # ---- Malicious: always [0, 1, 2, ..., m_target-1] ----
+            # ---- Malicious: fixed ids (0..m_target-1) only for UAM ----
             fixed_mal_ids = list(range(m_target))
             logger.info(f"fixed malicious IDs this round: {fixed_mal_ids}")
-            # logger.info(f"self.malicious_ids {self.malicious_ids}")
-
-            # (optional safety) ensure these are actually in your malicious pool
-            # comment this out if you already guarantee 0.. are malicious at init
-            assert all(mid in self.malicious_ids for mid in fixed_mal_ids), \
-                f"Fixed malicious IDs {fixed_mal_ids} must be in self.malicious_ids."
+            assert all(mid in self.malicious_ids for mid in fixed_mal_ids)
 
             # ---- Benign: random draw each round ----
             benign_pool = [i for i in range(N) if i not in self.malicious_ids]
@@ -2437,13 +2525,9 @@ class Helper:
                 raise ValueError(f"Not enough benign clients: need {b_target}, have {len(benign_pool)}")
 
             sel_b = self._rng.choice(benign_pool, size=b_target, replace=False).tolist() if b_target else []
+            return fixed_mal_ids + sel_b
 
-            # Do NOT shuffle so 0,1,2 (etc.) remain visible in logs
-            out = fixed_mal_ids + sel_b
-            return out
-
-        else: ValueError(f"Unknown selection mode: {self.selection_mode}")
-
+        raise ValueError(f"Unknown selection mode: {self.selection_mode}")
 
     def log_once(self, key, msg):
         if key not in self._logged_once:

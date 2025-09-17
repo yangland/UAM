@@ -1,2 +1,0 @@
-current_time,if_noniid,dirichlet_alpha,aggregation_method,pre_aggregation_method,malicious_attack,number_of_malicious,malicious_proportion,respect_server_model,malicious_group_agg,test_accuracy,test_loss,dominate_strategy,attack_success_rate
-Sep.13_14.51.50,True,0.1,flame,None,False,0,"[['untargeted', 1, -1, -1]]",NA,NA,0.4314,1.741054331421093,,{}

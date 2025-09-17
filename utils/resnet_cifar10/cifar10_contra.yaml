@@ -1,6 +1,6 @@
 ---
 if_series: True
-cuda_device: 6
+cuda_device: 0
 type: cifar10
 number_of_clients: 100
 select_precentage: 10
@@ -19,7 +19,7 @@ server_lr_decay: 'NA'
 server_lr_floor: 'NA'
 if_noniid_s: [True] # [False, True]
 # dirichlet_alpha
-dirichlet_alpha_s: [1.0, 0.1] 
+dirichlet_alpha_s: [5.0] 
 num_classes: 10
 train_amount: 50000
 random_seed: 0

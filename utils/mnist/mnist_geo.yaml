@@ -1,11 +1,11 @@
 ---
 if_series: True
-cuda_device: 4
+cuda_device: 2
 type: mnist
 number_of_clients: 100
 select_precentage: 10
 selection_mode: fixed_pct
-learning_rate: 0.005 # 0.1, 0.05
+learning_rate: 0.001 # 0.1, 0.05
 iterations: 200 #40, 24
 early_stopping: False
 early_stopping_tolerance: 3
@@ -19,7 +19,7 @@ server_lr_decay: 'NA'
 server_lr_floor: 'NA'
 if_noniid_s: [True]
 # dirichlet_alpha
-dirichlet_alpha_s: [0.1]
+dirichlet_alpha_s: [1.0]
 num_classes: 10
 train_amount: 20000
 random_seed: 0
@@ -55,7 +55,7 @@ number_of_malicious_s: [30]
 # malicious_modes: 'untargeted2' # 'untargeted1', 'untargeted2', 'label_flipping', 'backdoor'
 # baseline: 'little', 'explicit boosting', 'min-max', 'min-sum', 'RL', 'None'
 # attack_method: 'RL'
-attack_method_s: ['RL', 'None', 'little', 'explicit boosting', 'min-max', 'min-sum', 'RL', 'RL']
+attack_method_s: ['RL', 'min-max', 'RL', 'RL']
 Median_att: false
 White_box: false
 
