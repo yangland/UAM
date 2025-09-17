@@ -37,7 +37,7 @@ available_layers: ['fc1.weight', 'fc2.weight', 'fc3.weight']
 #aggregation_method_s: ['geom_median', 'single-krum', 'coordinate_wise_median']
 #pre_aggr_method_s: ['NNM', 'bucketing', 'None']
 
-aggregation_method_s: ['coordinate_wise_median']
+aggregation_method_s: ['RL', 'min-max', 'min-sum', 'None', 'little', 'explicit boosting', 'RL', 'RL']
 pre_aggr_method_s: ['None']
 
 krum_f: 8 # < 20/2 - 1

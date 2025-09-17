@@ -1,7 +1,6 @@
 ---
 if_series: True
 cuda_device: 2
-cuda_device: 2
 type: mnist
 number_of_clients: 100
 select_precentage: 10
@@ -56,7 +55,7 @@ number_of_malicious_s: [30]
 # malicious_modes: 'untargeted2' # 'untargeted1', 'untargeted2', 'label_flipping', 'backdoor'
 # baseline: 'little', 'explicit boosting', 'min-max', 'min-sum', 'RL', 'None'
 # attack_method: 'RL'
-attack_method_s: [ 'min-max', 'RL', 'RL', 'RL']
+attack_method_s: ['RL', 'min-max', 'min-sum', 'None', 'little', 'explicit boosting', 'RL', 'RL']
 Median_att: false
 White_box: false
 

@@ -120,22 +120,27 @@ def run_exp_once(params_loaded, series_time, curr_master, i, total_num_exp, data
     del params_loaded['current_time']
 
     # writing into one master csv file
+    # Use runtime truth from helper for logging
+    agg_used    = getattr(helper, "aggregation_method", params_loaded.get("aggregation_method"))
+    attack_used = getattr(helper, "attack_method",     params_loaded.get("attack_method"))
+
     line = [
         current_time,
         params_loaded['if_noniid'],
         params_loaded['dirichlet_alpha'],
-        params_loaded['aggregation_method'],
+        agg_used,                                  # was params_loaded['aggregation_method']
         params_loaded['pre_aggregation_method'],
         params_loaded['malicious_attack'],
         params_loaded['number_of_malicious'],
         params_loaded['malicious_proportion'],
-        params_loaded['attack_method'], 
+        attack_used,                               # was params_loaded['attack_method']
         'NA',
         test_accuracy,
         test_loss,
         dominate_strategy,
         attack_success_rate
     ]
+
     series_csv_logger.append_save_csv(line, helper.master_path, series_time, dataset_type)
 
 
