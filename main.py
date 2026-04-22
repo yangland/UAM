@@ -19,30 +19,11 @@ from helper import logger  # reuse the configured "uam" logger
 def exp_w_plotting(current_time, series_time, params_loaded, cuda_device):
     dataset_type = params_loaded['type']
 
-    if dataset_type == 'mnist':
+    if dataset_type in ('mnist', 'cifar10'):
         helper = Helper(current_time=current_time, series_time=series_time, params=params_loaded,
-                        name=params_loaded.get('name', 'mnist'), cuda_device=cuda_device)
-    elif dataset_type == 'cifar10':
-        helper = Helper(current_time=current_time, series_time=series_time, params=params_loaded,
-                        name=params_loaded.get('name', 'cifar10'), cuda_device=cuda_device)
-    elif dataset_type == 'emnist':
-        helper = Helper(current_time=current_time, series_time=series_time, params=params_loaded,
-                        name=params_loaded.get('name', 'emnist'), cuda_device=cuda_device)
-    elif dataset_type == 'fashion_mnist':
-        helper = Helper(current_time=current_time, series_time=series_time, params=params_loaded,
-                        name=params_loaded.get('name', 'fashion_mnist'), cuda_device=cuda_device)
-    elif dataset_type == 'kmnist':
-        helper = Helper(current_time=current_time, series_time=series_time, params=params_loaded,
-                        name=params_loaded.get('name', 'kmnist'), cuda_device=cuda_device)
-    elif dataset_type == 'cifar100':
-        helper = Helper(current_time=current_time, series_time=series_time, params=params_loaded,
-                        name=params_loaded.get('name', 'cifar100'), cuda_device=cuda_device)
-    elif dataset_type == 'imagenette':
-        helper = Helper(current_time=current_time, series_time=series_time, params=params_loaded,
-                        name=params_loaded.get('name', 'imagenette'), cuda_device=cuda_device)    
+                        name=params_loaded.get('name', dataset_type), cuda_device=cuda_device)
     else:
-        helper = None
-        print("Data type not configured in the main.py ")
+        raise ValueError(f"Unsupported dataset for this release: {dataset_type}")
     logger.info(f'Running Parameters:')
 
     for key, value in helper.params.items():

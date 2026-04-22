@@ -1,0 +1,10 @@
+numpy
+scipy
+scikit-learn
+torch
+torchvision
+PyYAML
+matplotlib
+hdbscan
+adjustText
+moviepy

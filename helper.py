@@ -1,8 +1,6 @@
-import os
 import numpy as np
 import math
 import random
-import logging
 import os
 import warnings
 import copy
@@ -14,25 +12,7 @@ from torch.utils.data import TensorDataset
 from torch.utils.data import DataLoader
 
 from models.mnist_3l import Mnist_3L
-from models.mnist_1l import Mnist_1L
-from models.cifar10_6l import Cifar10_6L
-from models.resnet18 import ResNet18
-from models.cifar10_9l import Cifar10_9L
-from models.fashion_cnn import FashionCNN
-from models.emnist_cnn import EmnistCNN
-from models.cifar10_googlenet import GoogLeNet
-from models.cifar10_8l import Cifar10_8L
-from models.cifar10_18l import Cifar10_18L
-from models.squeezenet11_cifar import SqueezeNet11_CIFAR
-from models.cifar10_vgg import vgg11, vgg13, vgg16
-from models.kmnist_12l import Kmnist_12L
-from models.cifar100_mobilenetv2 import mobilenetv2
-from models.cifar100_mobilenet import mobilenet
-from models.cifar100_resnet import resnet18
-from models.mobilenetv2_cifar import MobileNetV2_CIFAR
 from models.resnet20_cifar import ResNet20_CIFAR
-from models.small_cnn import SmallCNN_MNIST
-from models.tiny_cnn import TinyCNN_MNIST
 
 from csv_logging import Csv_logging
 from distance_matrix import Distance
@@ -1086,8 +1066,10 @@ class Helper:
             x, y = data
             if self.params['type'] == 'mnist':
                 x_data.append(torch.flatten(x[0]))
-            elif self.params['type'] in ['cifar10', 'fashion_mnist', 'emnist', 'kmnist', 'cifar100', 'imagenette']:
+            elif self.params['type'] == 'cifar10':
                 x_data.append(x)
+            else:
+                raise ValueError(f"Unsupported dataset in get_x_y_datasets: {self.params['type']}")
             y_data.append(y)
         x_data = torch.stack(x_data)
         y_data = torch.as_tensor(y_data)
@@ -1095,64 +1077,24 @@ class Helper:
 
     # Data Loading and Processing Functions
     def load_data(self):
-        transform_vanilla = transforms.Compose([transforms.ToTensor(), ])
+        transform_mnist = transforms.Compose([transforms.ToTensor()])
 
-        # ---------- CHANGE: add CIFAR normalizations ----------
         transform_cifar10 = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize((0.4914, 0.4822, 0.4465),
                                 (0.2470, 0.2435, 0.2616)),
         ])
-        transform_cifar100 = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.5071, 0.4867, 0.4408),
-                                (0.2675, 0.2565, 0.2761)),
-        ])
-        # ------------------------------------------------------
 
         if self.params['type'] == 'mnist':
-            self.train_dataset = datasets.MNIST('./data', train=True, download=True, transform=transform_vanilla)
-            self.test_dataset  = datasets.MNIST('./data', train=False, transform=transform_vanilla)
+            self.train_dataset = datasets.MNIST('./data', train=True, download=True, transform=transform_mnist)
+            self.test_dataset  = datasets.MNIST('./data', train=False, transform=transform_mnist)
 
         elif self.params['type'] == 'cifar10':
-            # ---------- CHANGE: use transform_cifar10 ----------
             self.train_dataset = datasets.CIFAR10('./data', train=True,  download=True, transform=transform_cifar10)
             self.test_dataset  = datasets.CIFAR10('./data', train=False, transform=transform_cifar10)
-            # ---------------------------------------------------
-
-        elif self.params['type'] == 'fashion_mnist':
-            self.train_dataset = datasets.FashionMNIST('./data', train=True, download=True, transform=transform_vanilla)
-            self.test_dataset  = datasets.FashionMNIST('./data', train=False, transform=transform_vanilla)
-
-        elif self.params['type'] == 'emnist':
-            self.train_dataset = datasets.EMNIST('./data', train=True,  download=True, transform=transform_vanilla, split="letters")
-            self.test_dataset  = datasets.EMNIST('./data', train=False, transform=transform_vanilla, split="letters")
-
-        elif self.params['type'] == 'kmnist':
-            self.train_dataset = datasets.KMNIST('./data', train=True, download=True, transform=transform_vanilla)
-            self.test_dataset  = datasets.KMNIST('./data', train=False, transform=transform_vanilla)
-
-        elif self.params['type'] == 'cifar100':
-            # ---------- CHANGE: use transform_cifar100 ----------
-            self.train_dataset = datasets.CIFAR100('./data', train=True,  download=True, transform=transform_cifar100)
-            self.test_dataset  = datasets.CIFAR100('./data', train=False, transform=transform_cifar100)
-            # ----------------------------------------------------
-
-        elif self.params['type'] == 'imagenette':
-            transform = transforms.Compose([
-                transforms.CenterCrop(160),
-                transforms.Resize(32),
-                transforms.ToTensor(),
-                transforms.Normalize((0.485, 0.456, 0.406),
-                                    (0.229, 0.224, 0.225)),
-            ])
-            # Please add downloaded file to "./data/"
-            # https://s3.amazonaws.com/fast-ai-imageclas/imagenette2-160.tgz
-            self.train_dataset = datasets.ImageFolder("./data/imagenette2-160/train", transform)
-            self.test_dataset  = datasets.ImageFolder("./data/imagenette2-160/val", transform)
 
         else:
-            warnings.warn("Data type not recognized in load_data")
+            raise ValueError(f"Unsupported dataset for the public ICASSP 2026 release: {self.params['type']}")
 
         logger.info('reading data done')
 
@@ -1502,11 +1444,11 @@ class Helper:
                 if self.params['type'] == 'mnist':
                     # convert data from [64, 1, 28, 28] to [64, 784]
                     data = torch.flatten(data, 1)
-                elif self.params['type'] in ['cifar10', 'fashion_mnist', 'emnist', 'kmnist', 'cifar100', 'imagenette']:
+                elif self.params['type'] == 'cifar10':
                     # print("data.shape", data.shape) # [64, 3, 32, 32] # 64 as 2 * batch size
                     data = data
                 else:
-                    warnings.warn("data type not in helper.validation")
+                    raise ValueError(f"Unsupported dataset in validation: {self.params['type']}")
 
                 is_nan = torch.stack([torch.isnan(p).any() for p in self.main_model.parameters()]).any()
                 if is_nan:
