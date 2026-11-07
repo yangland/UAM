@@ -118,4 +118,11 @@ Internal identifiers used in the implementation:
 
 ## Citation
 
-Citation information will be added after the ICASSP 2026 proceedings entry is available.
+@inproceedings{li2026uam,
+  title     = {Exploiting the Properties of an Adaptive Black-Box Attack Against Federated Learning},
+  author    = {Li, Yang and Kong, Adams Wai Kin},
+  booktitle = {2026 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)},
+  year      = {2026},
+  publisher = {IEEE},
+  doi       = {10.1109/ICASSP55912.2026.11463993}
+}
