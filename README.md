@@ -1,8 +1,10 @@
 # UAM: Adaptive Black-Box Attack Against Federated Learning
 
-Code for the ICASSP 2026 paper:
+Code for the paper published at **ICASSP 2026**:
 
-**Exploiting the Properties of an Adaptive Black-box Attack Against Federated Learning**
+**Exploiting the Properties of an Adaptive Black-Box Attack Against Federated Learning**
+
+[IEEE Xplore](https://doi.org/10.1109/ICASSP55912.2026.11463993)
 
 ## Overview
 
