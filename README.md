@@ -118,6 +118,9 @@ Internal identifiers used in the implementation:
 
 ## Citation
 
+If you find this work useful, please cite:
+
+```bibtex
 @inproceedings{li2026uam,
   title     = {Exploiting the Properties of an Adaptive Black-Box Attack Against Federated Learning},
   author    = {Li, Yang and Kong, Adams Wai Kin},
@@ -126,3 +129,4 @@ Internal identifiers used in the implementation:
   publisher = {IEEE},
   doi       = {10.1109/ICASSP55912.2026.11463993}
 }
+```
